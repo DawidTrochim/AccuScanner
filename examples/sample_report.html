@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AccuScanner Sample Report</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 3rem; background: #f7fafc; color: #1a202c; }
+    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 1.25rem; margin-bottom: 1rem; }
+    .pill { display: inline-block; padding: .25rem .5rem; border-radius: 999px; background: #c53030; color: #fff; font-size: .8rem; }
+    code { background: #edf2f7; padding: .1rem .35rem; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>AccuScanner Sample Report</h1>
+    <p>This is a lightweight sample artifact included for repository presentation. Generate a full styled report by running a live scan with <code>accuscanner scan ...</code>.</p>
+  </div>
+  <div class="card">
+    <span class="pill">HIGH</span>
+    <h2>HTTP service does not enforce HTTPS</h2>
+    <p><strong>Target:</strong> 10.10.10.15</p>
+    <p><strong>Evidence:</strong> Observed URL http://10.10.10.15 with status 200.</p>
+    <p><strong>Recommendation:</strong> Redirect all plaintext requests to HTTPS and enable HSTS.</p>
+  </div>
+</body>
+</html>

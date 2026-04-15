@@ -1,0 +1,115 @@
+{
+  "metadata": {
+    "target": "lab.example.internal",
+    "scan_mode": "web",
+    "started_at": "2026-04-15T12:00:00Z",
+    "ended_at": "2026-04-15T12:00:08Z",
+    "duration_seconds": 8.0,
+    "nmap_command": [
+      "nmap",
+      "-oX",
+      "-",
+      "-T4",
+      "-p",
+      "80,443,8080,8443",
+      "-sV",
+      "--script",
+      "http-title",
+      "lab.example.internal"
+    ]
+  },
+  "summary": {
+    "severity_totals": {
+      "critical": 0,
+      "high": 2,
+      "medium": 3,
+      "low": 2,
+      "info": 1
+    },
+    "severity_score": 30,
+    "total_findings": 8,
+    "top_risks": [
+      {
+        "id": "HTTP-005",
+        "title": "HTTP service does not enforce HTTPS",
+        "severity": "high",
+        "category": "web_security",
+        "target": "10.10.10.15",
+        "description": "The server responded over HTTP without redirecting clients to HTTPS.",
+        "evidence": "Observed URL http://10.10.10.15 with status 200.",
+        "recommendation": "Redirect all plaintext requests to HTTPS and enable HSTS."
+      }
+    ]
+  },
+  "hosts": [
+    {
+      "address": "10.10.10.15",
+      "hostname": "lab.example.internal",
+      "status": "up",
+      "ports": [
+        {
+          "port": 80,
+          "protocol": "tcp",
+          "state": "open",
+          "service": "http",
+          "product": "nginx",
+          "version": "1.24.0",
+          "extrainfo": null,
+          "tunnel": null,
+          "banner": "Demo application"
+        },
+        {
+          "port": 443,
+          "protocol": "tcp",
+          "state": "open",
+          "service": "https",
+          "product": "nginx",
+          "version": "1.24.0",
+          "extrainfo": null,
+          "tunnel": "ssl",
+          "banner": null
+        }
+      ],
+      "os_matches": [
+        "Linux 5.x"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "HTTP-005",
+      "title": "HTTP service does not enforce HTTPS",
+      "severity": "high",
+      "category": "web_security",
+      "target": "10.10.10.15",
+      "description": "The server responded over HTTP without redirecting clients to HTTPS.",
+      "evidence": "Observed URL http://10.10.10.15 with status 200.",
+      "recommendation": "Redirect all plaintext requests to HTTPS and enable HSTS."
+    },
+    {
+      "id": "HTTP-012",
+      "title": "Server header discloses implementation details",
+      "severity": "low",
+      "category": "web_headers",
+      "target": "10.10.10.15",
+      "description": "The response included a `Server` header that may help fingerprint the stack.",
+      "evidence": "Server: nginx/1.24.0",
+      "recommendation": "Suppress or minimize server version disclosure at the application or reverse proxy layer."
+    }
+  ],
+  "findings_by_target": {
+    "10.10.10.15": [
+      {
+        "id": "HTTP-005",
+        "title": "HTTP service does not enforce HTTPS",
+        "severity": "high",
+        "category": "web_security",
+        "target": "10.10.10.15",
+        "description": "The server responded over HTTP without redirecting clients to HTTPS.",
+        "evidence": "Observed URL http://10.10.10.15 with status 200.",
+        "recommendation": "Redirect all plaintext requests to HTTPS and enable HSTS."
+      }
+    ]
+  },
+  "errors": []
+}

@@ -1,0 +1,13 @@
+Target: lab.example.internal
+Mode: web
+Duration: 8.0s
+Hosts discovered: 1
+Severity score: 30
+Severity summary:
+  CRITICAL: 0
+  HIGH: 2
+  MEDIUM: 3
+  LOW: 2
+  INFO: 1
+JSON report: reports/20260415_120000/lab.example.internal-web-20260415_120000.json
+HTML report: reports/20260415_120000/lab.example.internal-web-20260415_120000.html

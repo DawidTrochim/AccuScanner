@@ -1,0 +1,9 @@
+ports: "22,80,443,6379,9200"
+parallelism: 10
+skip_host_discovery: true
+save_raw_xml: true
+enable_aws_checks: false
+enable_azure_checks: false
+ignore_ids:
+  - HTTP-012
+plugin_dir: examples/plugins
