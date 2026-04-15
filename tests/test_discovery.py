@@ -1,4 +1,4 @@
-from mininessus.discovery import build_extra_nmap_args
+from mininessus.discovery import _normalize_nmap_command, build_extra_nmap_args
 
 
 def test_build_extra_nmap_args_includes_udp_scan_settings():
@@ -13,3 +13,13 @@ def test_build_extra_nmap_args_includes_udp_scan_settings():
     assert "safe,vuln,ssl-cert" in args
     assert "--min-parallelism" in args
     assert "10" in args
+
+
+def test_normalize_nmap_command_removes_fast_scan_when_ports_are_explicit():
+    command = ["nmap", "-oX", "-", "-T4", "-F", "-sV", "target", "-p", "T:22,80,U:53", "-sU"]
+
+    normalized = _normalize_nmap_command(command)
+
+    assert "-F" not in normalized
+    assert "-p" in normalized
+    assert "T:22,80,U:53" in normalized

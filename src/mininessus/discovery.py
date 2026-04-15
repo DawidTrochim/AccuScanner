@@ -58,6 +58,7 @@ def run_nmap(
     command = build_nmap_command(target, scan_mode, skip_host_discovery=skip_host_discovery)
     if extra_args:
         command.extend(extra_args)
+    command = _normalize_nmap_command(command)
     logger.info("Running nmap command: %s", " ".join(command))
     completed = subprocess.run(command, capture_output=True, text=True, check=False)
     if completed.returncode != 0:
@@ -95,3 +96,11 @@ def _build_port_argument(tcp_ports: str | None, udp_ports: str | None) -> str | 
     if udp_ports:
         return f"U:{udp_ports}"
     return tcp_ports
+
+
+def _normalize_nmap_command(command: list[str]) -> list[str]:
+    """Remove incompatible nmap switches when richer profile options are present."""
+
+    if "-F" in command and "-p" in command:
+        command = [part for part in command if part != "-F"]
+    return command
