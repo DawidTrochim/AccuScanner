@@ -2,13 +2,6 @@
 
 AccuScanner is a defensive, Nessus-inspired vulnerability assessment tool built in Python for owned and authorized systems. It orchestrates `nmap`, parses structured results, applies modular checks across network, web, TLS, AWS, and Azure posture, and exports polished JSON and HTML reports.
 
-## Why This Project Is Strong Portfolio Material
-
-- Uses real security tooling instead of reimplementing a port scanner
-- Shows clean Python architecture with modular checks, typed models, config profiles, and plugin loading
-- Produces recruiter-friendly artifacts: styled reports, examples, CI, tests, Docker support, and cross-platform usage docs
-- Covers infrastructure exposure, common web weaknesses, and cloud posture checks in one project
-
 ## Core Capabilities
 
 - CLI built with `argparse`
