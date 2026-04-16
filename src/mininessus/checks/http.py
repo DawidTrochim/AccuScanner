@@ -31,6 +31,11 @@ SENSITIVE_PATHS = {
     "/server-status": ("HTTP-016", "Server status page exposed", "medium"),
     "/server-info": ("HTTP-017", "Server info page exposed", "medium"),
     "/phpinfo.php": ("HTTP-018", "phpinfo page exposed", "medium"),
+    "/crossdomain.xml": ("HTTP-054", "Cross-domain policy file exposed", "low"),
+    "/clientaccesspolicy.xml": ("HTTP-055", "Client access policy file exposed", "low"),
+    "/web.config": ("HTTP-056", "Web configuration file exposed", "high"),
+    "/shell.php": ("HTTP-057", "Potential web shell file exposed", "high"),
+    "/cmd.php": ("HTTP-057", "Potential web shell file exposed", "high"),
 }
 COMMON_PATHS = {
     "/admin": ("HTTP-019", "Potential admin interface exposed", "medium"),
@@ -98,6 +103,15 @@ SQL_ERROR_PATTERNS = {
     "oracle": re.compile(r"(ora-\d{5}|oracle error)", re.IGNORECASE),
     "sqlite": re.compile(r"(sqlite error|sqlite_exception|sqlite3::)", re.IGNORECASE),
 }
+APPLICATION_ERROR_PATTERNS = {
+    "php": re.compile(r"(php warning|php fatal error|stack trace:.*php|unexpected t_[a-z_]+)", re.IGNORECASE),
+    "xml": re.compile(r"(xml parsing error|xml parser error|xmlsyntaxerror|entityref: expecting)", re.IGNORECASE),
+    "xpath": re.compile(r"(xpath.*error|invalid predicate|xpath exception)", re.IGNORECASE),
+    "ldap": re.compile(r"(ldap error|javax\.naming|invalid dn syntax|ldapexception)", re.IGNORECASE),
+    "ssi": re.compile(r"(ssi include virtual|server side include|exec cmd=)", re.IGNORECASE),
+    "os_command": re.compile(r"(sh: .* not found|command not found|cannot execute|/bin/sh:)", re.IGNORECASE),
+    "smtp": re.compile(r"(smtp error|mail command failed|could not instantiate mail function)", re.IGNORECASE),
+}
 INJECTION_PARAMETER_NAMES = {
     "id",
     "item",
@@ -114,7 +128,16 @@ INJECTION_PARAMETER_NAMES = {
     "category",
     "group",
 }
+FILE_PARAMETER_NAMES = {"file", "path", "page", "template", "include", "document", "folder", "dir"}
+URL_PARAMETER_NAMES = {"url", "uri", "link", "dest", "redirect", "return", "next", "target"}
 FORM_FIELD_PATTERN = re.compile(r'name=["\']([A-Za-z0-9_.-]{1,64})["\']', re.IGNORECASE)
+FORM_TAG_PATTERN = re.compile(r"<form\b", re.IGNORECASE)
+FILE_UPLOAD_PATTERN = re.compile(r'type=["\']file["\']', re.IGNORECASE)
+CSRF_TOKEN_PATTERN = re.compile(r'name=["\'](?:csrf|csrf_token|xsrf|authenticity_token|__requestverificationtoken)["\']', re.IGNORECASE)
+PASSWORD_RESET_PATTERN = re.compile(r"(forgot password|reset password|password reset)", re.IGNORECASE)
+WEB_STORAGE_PATTERN = re.compile(r"\b(?:localStorage|sessionStorage|indexedDB)\b", re.IGNORECASE)
+SOAP_MARKERS = ("soapenv:", "soap:", "wsdl", "?wsdl", "application/soap+xml")
+AJAX_MARKERS = ("xmlhttprequest", "jquery", "fetch(", "axios", "application/json")
 
 
 @dataclass(slots=True)
@@ -203,6 +226,9 @@ class HttpSecurityCheck(BaseCheck):
         findings.extend(self._build_server_header_finding(request_host, observation.headers))
         findings.extend(self._build_auth_surface_findings(request_host, observation))
         findings.extend(self._build_passive_injection_findings(request_host, observation))
+        findings.extend(self._build_form_posture_findings(request_host, observation))
+        findings.extend(self._build_client_side_surface_findings(request_host, observation))
+        findings.extend(self._build_protocol_surface_findings(request_host, observation))
         findings.extend(self._build_sensitive_path_findings(request_host, base_url))
         findings.extend(self._build_common_path_findings(request_host, base_url))
         findings.extend(self._build_api_surface_findings(request_host, base_url))
@@ -572,6 +598,9 @@ class HttpSecurityCheck(BaseCheck):
                 )
                 findings.extend(self._build_secret_exposure_findings(target, observation))
                 findings.extend(self._build_passive_injection_findings(target, observation))
+                findings.extend(self._build_form_posture_findings(target, observation))
+                findings.extend(self._build_client_side_surface_findings(target, observation))
+                findings.extend(self._build_protocol_surface_findings(target, observation))
         return findings
 
     def _build_common_path_findings(self, target: str, base_url: str) -> list[Finding]:
@@ -594,6 +623,9 @@ class HttpSecurityCheck(BaseCheck):
                     )
                 )
                 findings.extend(self._build_passive_injection_findings(target, observation))
+                findings.extend(self._build_form_posture_findings(target, observation))
+                findings.extend(self._build_client_side_surface_findings(target, observation))
+                findings.extend(self._build_protocol_surface_findings(target, observation))
         return findings
 
     def _build_api_surface_findings(self, target: str, base_url: str) -> list[Finding]:
@@ -718,6 +750,7 @@ class HttpSecurityCheck(BaseCheck):
     def _build_passive_injection_findings(self, target: str, observation: HttpObservation) -> list[Finding]:
         findings: list[Finding] = []
         findings.extend(self._build_sql_error_findings(target, observation))
+        findings.extend(self._build_application_error_findings(target, observation))
         findings.extend(self._build_input_surface_findings(target, observation))
         return findings
 
@@ -744,26 +777,209 @@ class HttpSecurityCheck(BaseCheck):
             )
         return findings
 
+    def _build_application_error_findings(self, target: str, observation: HttpObservation) -> list[Finding]:
+        body_preview = observation.body_preview or ""
+        findings: list[Finding] = []
+        for family, pattern in APPLICATION_ERROR_PATTERNS.items():
+            match = pattern.search(body_preview)
+            if not match:
+                continue
+            findings.append(
+                self.finding(
+                    finding_id=f"HTTP-058-{family}",
+                    title="Possible application error leakage",
+                    severity="medium",
+                    category="input_validation",
+                    target=target,
+                    description="The response body matched an error pattern associated with unsafe input handling or backend exception leakage.",
+                    evidence=f"URL: {observation.url}; matched family: {family}; snippet: {match.group(0)[:120]}",
+                    recommendation="Suppress verbose backend errors, validate untrusted input, and review the affected route during authorized testing.",
+                    confidence="medium",
+                    tags=["web", "input", "manual-review"],
+                )
+            )
+        return findings
+
     def _build_input_surface_findings(self, target: str, observation: HttpObservation) -> list[Finding]:
         parameter_names = {name.lower() for name, _ in parse_qsl(urlparse(observation.url).query, keep_blank_values=True)}
         parameter_names.update(match.lower() for match in FORM_FIELD_PATTERN.findall(observation.body_preview or ""))
         suspicious_names = sorted(name for name in parameter_names if name in INJECTION_PARAMETER_NAMES)
-        if not suspicious_names:
-            return []
-        return [
-            self.finding(
-                finding_id="HTTP-053",
-                title="Possible database-backed input surface detected",
-                severity="low",
-                category="input_surface",
-                target=target,
-                description="The endpoint exposes query parameters or form fields commonly associated with database-backed filtering or record lookups.",
-                evidence=f"URL: {observation.url}; parameter candidates: {', '.join(suspicious_names)}",
-                recommendation="Review server-side input handling, parameterized query usage, and validation on the identified parameters during authorized testing.",
-                confidence="low",
-                tags=["web", "input", "manual-review"],
+        findings: list[Finding] = []
+        if suspicious_names:
+            findings.append(
+                self.finding(
+                    finding_id="HTTP-053",
+                    title="Possible database-backed input surface detected",
+                    severity="low",
+                    category="input_surface",
+                    target=target,
+                    description="The endpoint exposes query parameters or form fields commonly associated with database-backed filtering or record lookups.",
+                    evidence=f"URL: {observation.url}; parameter candidates: {', '.join(suspicious_names)}",
+                    recommendation="Review server-side input handling, parameterized query usage, and validation on the identified parameters during authorized testing.",
+                    confidence="low",
+                    tags=["web", "input", "manual-review"],
+                )
             )
-        ]
+        file_names = sorted(name for name in parameter_names if name in FILE_PARAMETER_NAMES)
+        if file_names:
+            findings.append(
+                self.finding(
+                    finding_id="HTTP-059",
+                    title="Possible file inclusion or traversal surface detected",
+                    severity="low",
+                    category="input_surface",
+                    target=target,
+                    description="The endpoint exposes parameters commonly associated with file path selection or template inclusion.",
+                    evidence=f"URL: {observation.url}; parameter candidates: {', '.join(file_names)}",
+                    recommendation="Review path handling, allowlists, and path normalization for the identified parameters during authorized testing.",
+                    confidence="low",
+                    tags=["web", "input", "manual-review"],
+                )
+            )
+        url_names = sorted(name for name in parameter_names if name in URL_PARAMETER_NAMES)
+        if url_names:
+            findings.append(
+                self.finding(
+                    finding_id="HTTP-060",
+                    title="Possible URL fetch or redirect surface detected",
+                    severity="low",
+                    category="input_surface",
+                    target=target,
+                    description="The endpoint exposes parameters commonly associated with redirects or server-side URL fetching.",
+                    evidence=f"URL: {observation.url}; parameter candidates: {', '.join(url_names)}",
+                    recommendation="Review redirect validation, outbound request allowlists, and URL handling logic for the identified parameters during authorized testing.",
+                    confidence="low",
+                    tags=["web", "input", "manual-review"],
+                )
+            )
+        return findings
+
+    def _build_form_posture_findings(self, target: str, observation: HttpObservation) -> list[Finding]:
+        body_preview = observation.body_preview or ""
+        findings: list[Finding] = []
+        if FORM_TAG_PATTERN.search(body_preview) and not CSRF_TOKEN_PATTERN.search(body_preview):
+            findings.append(
+                self.finding(
+                    finding_id="HTTP-061",
+                    title="HTML form lacks obvious anti-CSRF token",
+                    severity="low",
+                    category="session_security",
+                    target=target,
+                    description="The page contains an HTML form but no common anti-CSRF token field was observed in the captured response.",
+                    evidence=f"URL: {observation.url}",
+                    recommendation="Confirm state-changing forms include anti-CSRF protections and same-site cookie defenses where appropriate.",
+                    confidence="low",
+                    tags=["web", "forms", "manual-review"],
+                )
+            )
+        if FILE_UPLOAD_PATTERN.search(body_preview):
+            findings.append(
+                self.finding(
+                    finding_id="HTTP-062",
+                    title="File upload surface detected",
+                    severity="medium",
+                    category="web_surface",
+                    target=target,
+                    description="The page appears to expose a file upload field.",
+                    evidence=f"URL: {observation.url}",
+                    recommendation="Review upload validation, file type restrictions, storage paths, and malware scanning controls on the identified upload flow.",
+                    confidence="medium",
+                    tags=["web", "upload", "manual-review"],
+                )
+            )
+        if PASSWORD_RESET_PATTERN.search(body_preview):
+            findings.append(
+                self.finding(
+                    finding_id="HTTP-063",
+                    title="Password reset surface detected",
+                    severity="low",
+                    category="auth_surface",
+                    target=target,
+                    description="The response suggests a password reset workflow is reachable.",
+                    evidence=f"URL: {observation.url}",
+                    recommendation="Review reset token entropy, host header handling, expiration, and account verification controls on the reset workflow.",
+                    confidence="low",
+                    tags=["web", "auth", "manual-review"],
+                )
+            )
+        return findings
+
+    def _build_client_side_surface_findings(self, target: str, observation: HttpObservation) -> list[Finding]:
+        body_preview = observation.body_preview or ""
+        lowered = body_preview.lower()
+        findings: list[Finding] = []
+        if WEB_STORAGE_PATTERN.search(body_preview):
+            findings.append(
+                self.finding(
+                    finding_id="HTTP-064",
+                    title="Client-side web storage usage detected",
+                    severity="low",
+                    category="client_security",
+                    target=target,
+                    description="The response references browser storage APIs such as localStorage or sessionStorage.",
+                    evidence=f"URL: {observation.url}",
+                    recommendation="Review whether sensitive data is stored client-side and ensure storage usage aligns with session-security requirements.",
+                    confidence="low",
+                    tags=["web", "client", "manual-review"],
+                )
+            )
+        if any(marker in lowered for marker in AJAX_MARKERS):
+            findings.append(
+                self.finding(
+                    finding_id="HTTP-065",
+                    title="AJAX or JSON-heavy application surface detected",
+                    severity="low",
+                    category="client_security",
+                    target=target,
+                    description="The response suggests a JavaScript-heavy or API-driven application surface.",
+                    evidence=f"URL: {observation.url}",
+                    recommendation="Review client-side request handling, API authorization, and JSON response controls for the identified application surface.",
+                    confidence="low",
+                    tags=["web", "client", "api", "manual-review"],
+                )
+            )
+        return findings
+
+    def _build_protocol_surface_findings(self, target: str, observation: HttpObservation) -> list[Finding]:
+        text = " ".join(
+            [
+                (observation.body_preview or "").lower(),
+                " ".join(f"{key}:{value}".lower() for key, value in observation.headers.items()),
+            ]
+        )
+        findings: list[Finding] = []
+        if any(marker in text for marker in SOAP_MARKERS):
+            findings.append(
+                self.finding(
+                    finding_id="HTTP-066",
+                    title="SOAP or WSDL application surface detected",
+                    severity="low",
+                    category="api_surface",
+                    target=target,
+                    description="The response suggests a SOAP-based service or WSDL-related application surface.",
+                    evidence=f"URL: {observation.url}",
+                    recommendation="Review SOAP endpoint exposure, XML parser hardening, and access controls on the identified service.",
+                    confidence="low",
+                    tags=["web", "api", "xml", "manual-review"],
+                )
+            )
+        dav_header = observation.headers.get("dav")
+        if dav_header:
+            findings.append(
+                self.finding(
+                    finding_id="HTTP-067",
+                    title="WebDAV support advertised",
+                    severity="medium",
+                    category="configuration",
+                    target=target,
+                    description="The response advertised WebDAV support via the DAV header.",
+                    evidence=f"DAV: {dav_header}",
+                    recommendation="Confirm WebDAV is intentionally exposed and restrict authoring methods or access if it is not required.",
+                    confidence="medium",
+                    tags=["web", "configuration", "manual-review"],
+                )
+            )
+        return findings
 
     @staticmethod
     def _build_url(scheme: str, host: str, port: int) -> str:

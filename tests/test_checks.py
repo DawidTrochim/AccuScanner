@@ -61,11 +61,13 @@ def test_http_security_check_flags_missing_headers_and_surfaces(mock_fetch):
             return HttpObservation(url=url, status=200, headers={}, body_preview='{"status":"UP"}')
         if url.endswith("/backup"):
             return HttpObservation(
-                url="http://10.0.0.5/backup?id=42&sort=asc",
+                url="http://10.0.0.5/backup?id=42&sort=asc&file=report.txt&url=https://example.com",
                 status=200,
                 headers={},
-                body_preview='<form><input name="search"><input name="category"></form>',
+                body_preview='<form><input name="search"><input name="category"><input type="file" name="upload"></form> forgot password localStorage',
             )
+        if url.endswith("/crossdomain.xml"):
+            return HttpObservation(url=url, status=200, headers={"content-type": "application/xml"}, body_preview='<cross-domain-policy></cross-domain-policy>')
         if headers and headers.get("Origin") == "https://accuscanner-origin.example":
             return HttpObservation(
                 url=url,
@@ -94,8 +96,8 @@ def test_http_security_check_flags_missing_headers_and_surfaces(mock_fetch):
             return HttpObservation(
                 url=url,
                 status=200,
-                headers={"server": "nginx/1.25", "x-frame-options": "DENY"},
-                body_preview="PostgreSQL ERROR: syntax error at or near SELECT",
+                headers={"server": "nginx/1.25", "x-frame-options": "DENY", "dav": "1,2"},
+                body_preview="PostgreSQL ERROR: syntax error at or near SELECT soapenv:Envelope PHP Warning: include() failed",
                 cookies=["sessionid=abc; Secure"],
                 redirected_to_https=False,
             )
@@ -128,6 +130,16 @@ def test_http_security_check_flags_missing_headers_and_surfaces(mock_fetch):
     assert "HTTP-050" in ids
     assert "HTTP-052-postgresql" in ids
     assert "HTTP-053" in ids
+    assert "HTTP-054" in ids
+    assert "HTTP-058-php" in ids
+    assert "HTTP-059" in ids
+    assert "HTTP-060" in ids
+    assert "HTTP-061" in ids
+    assert "HTTP-062" in ids
+    assert "HTTP-063" in ids
+    assert "HTTP-064" in ids
+    assert "HTTP-066" in ids
+    assert "HTTP-067" in ids
 
 
 @patch("mininessus.checks.http.fetch_http_observation")
