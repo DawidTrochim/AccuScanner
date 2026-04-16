@@ -122,6 +122,8 @@ def _remove_duplicate_port_selection(command: list[str]) -> list[str]:
     explicit_port_indexes = [index for index, part in enumerate(command) if part == "-p"]
     if len(explicit_port_indexes) <= 1 and "-p-" not in command:
         return command
+    if not explicit_port_indexes:
+        return command
 
     normalized: list[str] = []
     keep_index = explicit_port_indexes[-1]
