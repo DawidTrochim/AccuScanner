@@ -78,8 +78,11 @@ def build_extra_nmap_args(
     port_argument = _build_port_argument(ports, udp_ports)
     if port_argument:
         extra_args.extend(["-p", port_argument])
-    if udp_ports or udp_top_ports:
+    include_udp_scan = bool(udp_ports or udp_top_ports)
+    if include_udp_scan:
         extra_args.append("-sU")
+    if include_udp_scan and _includes_tcp_ports(ports, udp_ports):
+        extra_args.append("-sS")
     if udp_top_ports:
         extra_args.extend(["--top-ports", str(udp_top_ports)])
     script_arguments = [value for value in [*(nse_categories or []), *(nse_scripts or [])] if value]
@@ -96,6 +99,12 @@ def _build_port_argument(tcp_ports: str | None, udp_ports: str | None) -> str | 
     if udp_ports:
         return f"U:{udp_ports}"
     return tcp_ports
+
+
+def _includes_tcp_ports(tcp_ports: str | None, udp_ports: str | None) -> bool:
+    """Return True when the scan should include TCP probes alongside UDP."""
+
+    return bool(tcp_ports or not udp_ports)
 
 
 def _normalize_nmap_command(command: list[str]) -> list[str]:

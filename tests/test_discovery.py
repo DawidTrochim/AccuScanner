@@ -5,6 +5,7 @@ def test_build_extra_nmap_args_includes_udp_scan_settings():
     args = build_extra_nmap_args("22,80,443", "53,161", 20, ["ssl-cert"], ["safe", "vuln"], 10)
 
     assert "-sU" in args
+    assert "-sS" in args
     assert "-p" in args
     assert "T:22,80,443,U:53,161" in args
     assert "--top-ports" in args
@@ -13,6 +14,15 @@ def test_build_extra_nmap_args_includes_udp_scan_settings():
     assert "safe,vuln,ssl-cert" in args
     assert "--min-parallelism" in args
     assert "10" in args
+
+
+def test_build_extra_nmap_args_keeps_udp_only_scans_udp_only():
+    args = build_extra_nmap_args(None, "53,161", None, None, None, None)
+
+    assert "-sU" in args
+    assert "-sS" not in args
+    assert "-p" in args
+    assert "U:53,161" in args
 
 
 def test_normalize_nmap_command_removes_fast_scan_when_ports_are_explicit():

@@ -8,7 +8,7 @@ from .config import ScanConfig
 PROFILE_PRESETS: dict[str, ScanConfig] = {
     "external": ScanConfig(
         profile="external",
-        ports="21,22,25,53,80,110,123,135,139,143,443,445,993,995,1433,1521,2375,3389,5432,5900,5985,5986,6379,6443,9200",
+        ports="21,22,23,25,53,80,110,123,135,139,143,443,445,993,995,1433,1521,2375,3389,5432,5900,5985,5986,6379,6443,9200",
         udp_ports="53,123,161",
         nse_categories=["safe"],
         parallelism=10,
@@ -44,7 +44,7 @@ PROFILE_PRESETS: dict[str, ScanConfig] = {
     ),
     "linux": ScanConfig(
         profile="linux",
-        ports="21,22,80,111,443,2049,2375,3306,5432,6379,9200",
+        ports="21,22,23,80,111,443,2049,2375,3306,5432,6379,9200",
         udp_ports="53,123,161",
         nse_categories=["safe"],
     ),
