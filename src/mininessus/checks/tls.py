@@ -87,9 +87,27 @@ def _validate_certificate_chain(hostname: str, port: int, timeout: int) -> str |
 
 
 def _matches_hostname(hostname: str, details: TLSDetails) -> bool:
-    if hostname == details.subject_cn:
+    candidates = details.san_dns_names or ([details.subject_cn] if details.subject_cn else [])
+    return any(_dns_name_matches(hostname, candidate) for candidate in candidates)
+
+
+def _dns_name_matches(hostname: str, pattern: str | None) -> bool:
+    if not pattern:
+        return False
+
+    hostname = hostname.lower().rstrip(".")
+    pattern = pattern.lower().rstrip(".")
+    if hostname == pattern:
         return True
-    return hostname in details.san_dns_names
+    if not pattern.startswith("*."):
+        return False
+
+    suffix = pattern[2:]
+    hostname_labels = hostname.split(".")
+    suffix_labels = suffix.split(".")
+    if len(hostname_labels) != len(suffix_labels) + 1:
+        return False
+    return hostname.endswith(f".{suffix}")
 
 
 class TlsCertificateCheck(BaseCheck):

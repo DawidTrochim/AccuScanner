@@ -59,6 +59,13 @@ def test_http_security_check_flags_missing_headers_and_surfaces(mock_fetch):
             return HttpObservation(url=url, status=200, headers={}, body_preview='{"names":["http.server.requests"]}')
         if url.endswith("/manage/health"):
             return HttpObservation(url=url, status=200, headers={}, body_preview='{"status":"UP"}')
+        if url.endswith("/backup"):
+            return HttpObservation(
+                url="http://10.0.0.5/backup?id=42&sort=asc",
+                status=200,
+                headers={},
+                body_preview='<form><input name="search"><input name="category"></form>',
+            )
         if headers and headers.get("Origin") == "https://accuscanner-origin.example":
             return HttpObservation(
                 url=url,
@@ -81,6 +88,15 @@ def test_http_security_check_flags_missing_headers_and_surfaces(mock_fetch):
                 },
                 body_preview="Index of / Welcome to nginx phpmyadmin",
                 cookies=["sessionid=abc"],
+                redirected_to_https=False,
+            )
+        if url.startswith("https://10.0.0.5"):
+            return HttpObservation(
+                url=url,
+                status=200,
+                headers={"server": "nginx/1.25", "x-frame-options": "DENY"},
+                body_preview="PostgreSQL ERROR: syntax error at or near SELECT",
+                cookies=["sessionid=abc; Secure"],
                 redirected_to_https=False,
             )
         return HttpObservation(
@@ -110,6 +126,8 @@ def test_http_security_check_flags_missing_headers_and_surfaces(mock_fetch):
     assert "HTTP-048" in ids
     assert "HTTP-049" in ids
     assert "HTTP-050" in ids
+    assert "HTTP-052-postgresql" in ids
+    assert "HTTP-053" in ids
 
 
 @patch("mininessus.checks.http.fetch_http_observation")
@@ -173,9 +191,76 @@ def test_tls_check_prefers_requested_hostname(mock_inspect):
     mock_inspect.assert_called_once_with("msp365.sa1cloud.com", port=443)
 
 
+@patch("mininessus.checks.tls.inspect_tls_certificate")
+def test_tls_check_accepts_wildcard_san_without_hostname_mismatch(mock_inspect):
+    mock_inspect.return_value = TLSDetails(
+        not_after="Jan 01 00:00:00 2030 GMT",
+        subject_cn="sa1cloud.com",
+        issuer_cn="Example CA",
+        self_signed=False,
+        tls_version="TLSv1.3",
+        cipher="TLS_AES_256_GCM_SHA384",
+        san_dns_names=["*.sa1cloud.com", "sa1cloud.com"],
+        validation_error=None,
+    )
+
+    findings = list(TlsCertificateCheck().run([sample_host()], "https://msp365.sa1cloud.com"))
+
+    assert "TLS-007" not in {finding.id for finding in findings}
+
+
 def test_banner_exposure_check_reports_service_metadata():
     findings = list(BannerExposureCheck().run([sample_host()], "10.0.0.5"))
     assert any(finding.id == "BANNER-21" for finding in findings)
+
+
+@patch("mininessus.checks.http.fetch_http_observation")
+def test_http_security_check_skips_api_auth_finding_when_redirected_to_login(mock_fetch):
+    def fake_fetch(
+        url: str,
+        timeout: int = 5,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+    ) -> HttpObservation:
+        if method == "OPTIONS":
+            return HttpObservation(url=url, status=405, headers={}, redirected_to_https=False)
+        if method == "TRACE":
+            return HttpObservation(url=url, status=405, headers={}, redirected_to_https=False)
+        if url.endswith("/manage/health"):
+            return HttpObservation(
+                url="https://msp365.sa1cloud.com:8443/manage/account/login?redirect=%2Fmanage%2Fhealth",
+                status=200,
+                headers={},
+                body_preview="UniFi Network Login",
+                redirected_to_https=False,
+            )
+        if url == "https://msp365.sa1cloud.com:8443":
+            return HttpObservation(
+                url=url,
+                status=200,
+                headers={"server": "cloudflare", "x-frame-options": "DENY"},
+                body_preview="Portal",
+                redirected_to_https=False,
+            )
+        return HttpObservation(
+            url=url,
+            status=404,
+            headers={},
+            body_preview="Not Found",
+            redirected_to_https=False,
+        )
+
+    host = HostResult(
+        address="104.21.45.46",
+        hostname="msp365.sa1cloud.com",
+        status="up",
+        ports=[PortService(port=8443, protocol="tcp", state="open", service="http", tunnel="ssl")],
+    )
+
+    mock_fetch.side_effect = fake_fetch
+    findings = list(HttpSecurityCheck().run([host], "https://msp365.sa1cloud.com"))
+
+    assert "HTTP-048" not in {finding.id for finding in findings}
 
 
 @patch("mininessus.checks.services._send_http_request")

@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from ipaddress import ip_address
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urljoin, urlparse
 from urllib.request import HTTPHandler, HTTPSHandler, Request, build_opener
 
 from .base import BaseCheck
@@ -91,6 +91,30 @@ SECRET_PATTERNS = {
     "private_key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
     "jwt": re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}\.[A-Za-z0-9._-]{10,}"),
 }
+SQL_ERROR_PATTERNS = {
+    "mysql": re.compile(r"(sql syntax.*mysql|warning: mysql_|mysql_fetch_|mysql_num_rows)", re.IGNORECASE),
+    "postgresql": re.compile(r"(postgresql.*error|pg_query\(|pg_exec\(|psql:)", re.IGNORECASE),
+    "mssql": re.compile(r"(sql server|unclosed quotation mark after the character string|microsoft ole db provider for sql server)", re.IGNORECASE),
+    "oracle": re.compile(r"(ora-\d{5}|oracle error)", re.IGNORECASE),
+    "sqlite": re.compile(r"(sqlite error|sqlite_exception|sqlite3::)", re.IGNORECASE),
+}
+INJECTION_PARAMETER_NAMES = {
+    "id",
+    "item",
+    "user",
+    "uid",
+    "account",
+    "search",
+    "query",
+    "q",
+    "filter",
+    "sort",
+    "order",
+    "page",
+    "category",
+    "group",
+}
+FORM_FIELD_PATTERN = re.compile(r'name=["\']([A-Za-z0-9_.-]{1,64})["\']', re.IGNORECASE)
 
 
 @dataclass(slots=True)
@@ -178,6 +202,7 @@ class HttpSecurityCheck(BaseCheck):
         findings.extend(self._build_trace_finding(request_host, base_url))
         findings.extend(self._build_server_header_finding(request_host, observation.headers))
         findings.extend(self._build_auth_surface_findings(request_host, observation))
+        findings.extend(self._build_passive_injection_findings(request_host, observation))
         findings.extend(self._build_sensitive_path_findings(request_host, base_url))
         findings.extend(self._build_common_path_findings(request_host, base_url))
         findings.extend(self._build_api_surface_findings(request_host, base_url))
@@ -546,6 +571,7 @@ class HttpSecurityCheck(BaseCheck):
                     )
                 )
                 findings.extend(self._build_secret_exposure_findings(target, observation))
+                findings.extend(self._build_passive_injection_findings(target, observation))
         return findings
 
     def _build_common_path_findings(self, target: str, base_url: str) -> list[Finding]:
@@ -567,6 +593,7 @@ class HttpSecurityCheck(BaseCheck):
                         tags=["web", "surface"],
                     )
                 )
+                findings.extend(self._build_passive_injection_findings(target, observation))
         return findings
 
     def _build_api_surface_findings(self, target: str, base_url: str) -> list[Finding]:
@@ -631,10 +658,13 @@ class HttpSecurityCheck(BaseCheck):
         findings: list[Finding] = []
         seen_ids: set[str] = set()
         for path, (finding_id, title, severity) in API_ADMIN_PATHS.items():
-            observation = fetch_http_observation(urljoin(base_url + "/", path.lstrip("/")))
+            requested_url = urljoin(base_url + "/", path.lstrip("/"))
+            observation = fetch_http_observation(requested_url)
             if not observation.status or observation.status >= 400:
                 continue
             if observation.headers.get("www-authenticate"):
+                continue
+            if self._redirected_to_login(requested_url, observation):
                 continue
             if finding_id in seen_ids:
                 continue
@@ -654,6 +684,15 @@ class HttpSecurityCheck(BaseCheck):
             )
             seen_ids.add(finding_id)
         return findings
+
+    @staticmethod
+    def _redirected_to_login(requested_url: str, observation: HttpObservation) -> bool:
+        if observation.url == requested_url:
+            return False
+        lowered_url = observation.url.lower()
+        lowered_body = observation.body_preview.lower()
+        login_markers = ("login", "signin", "sign-in", "auth")
+        return any(marker in lowered_url or marker in lowered_body for marker in login_markers)
 
     def _build_fingerprint_findings(self, target: str, observation: HttpObservation) -> list[Finding]:
         findings: list[Finding] = []
@@ -675,6 +714,56 @@ class HttpSecurityCheck(BaseCheck):
                     )
                 )
         return findings
+
+    def _build_passive_injection_findings(self, target: str, observation: HttpObservation) -> list[Finding]:
+        findings: list[Finding] = []
+        findings.extend(self._build_sql_error_findings(target, observation))
+        findings.extend(self._build_input_surface_findings(target, observation))
+        return findings
+
+    def _build_sql_error_findings(self, target: str, observation: HttpObservation) -> list[Finding]:
+        body_preview = observation.body_preview or ""
+        findings: list[Finding] = []
+        for backend, pattern in SQL_ERROR_PATTERNS.items():
+            match = pattern.search(body_preview)
+            if not match:
+                continue
+            findings.append(
+                self.finding(
+                    finding_id=f"HTTP-052-{backend}",
+                    title="Possible SQL error message exposure",
+                    severity="medium",
+                    category="input_validation",
+                    target=target,
+                    description="The response body matched an error pattern commonly associated with database-backed application failures.",
+                    evidence=f"URL: {observation.url}; matched backend: {backend}; snippet: {match.group(0)[:120]}",
+                    recommendation="Review error handling, suppress backend exception details in responses, and validate input handling on the affected route.",
+                    confidence="medium",
+                    tags=["web", "input", "manual-review"],
+                )
+            )
+        return findings
+
+    def _build_input_surface_findings(self, target: str, observation: HttpObservation) -> list[Finding]:
+        parameter_names = {name.lower() for name, _ in parse_qsl(urlparse(observation.url).query, keep_blank_values=True)}
+        parameter_names.update(match.lower() for match in FORM_FIELD_PATTERN.findall(observation.body_preview or ""))
+        suspicious_names = sorted(name for name in parameter_names if name in INJECTION_PARAMETER_NAMES)
+        if not suspicious_names:
+            return []
+        return [
+            self.finding(
+                finding_id="HTTP-053",
+                title="Possible database-backed input surface detected",
+                severity="low",
+                category="input_surface",
+                target=target,
+                description="The endpoint exposes query parameters or form fields commonly associated with database-backed filtering or record lookups.",
+                evidence=f"URL: {observation.url}; parameter candidates: {', '.join(suspicious_names)}",
+                recommendation="Review server-side input handling, parameterized query usage, and validation on the identified parameters during authorized testing.",
+                confidence="low",
+                tags=["web", "input", "manual-review"],
+            )
+        ]
 
     @staticmethod
     def _build_url(scheme: str, host: str, port: int) -> str:
