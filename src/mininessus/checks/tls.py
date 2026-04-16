@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from ipaddress import ip_address
 
 from .base import BaseCheck
+from .http import fetch_http_observation
 from ..models import Finding, HostResult
 from ..utils import sanitize_target
 
@@ -125,6 +126,8 @@ class TlsCertificateCheck(BaseCheck):
             try:
                 details = inspect_tls_certificate(server_name, port=port)
             except OSError as exc:
+                if self._https_fetch_succeeded(server_name, port):
+                    continue
                 findings.append(
                     self.finding(
                         finding_id="TLS-004",
@@ -141,6 +144,13 @@ class TlsCertificateCheck(BaseCheck):
 
             findings.extend(self._build_certificate_findings(server_name, server_name, details))
         return findings
+
+    @staticmethod
+    def _https_fetch_succeeded(server_name: str, port: int) -> bool:
+        default_port = 443
+        url = f"https://{server_name}" if port == default_port else f"https://{server_name}:{port}"
+        observation = fetch_http_observation(url, timeout=5, method="HEAD")
+        return observation.status is not None and observation.status < 500
 
     @staticmethod
     def _server_name(target: str, host: HostResult) -> str:

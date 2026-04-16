@@ -29,6 +29,9 @@ class ScanConfig:
     enable_azure_checks: bool = False
     enable_gcp_checks: bool = False
     plugin_dir: str | None = None
+    browser_assisted: bool = False
+    browser_max_pages: int | None = None
+    browser_timeout_ms: int | None = None
 
 
 def load_scan_config(path: str | None) -> ScanConfig:
@@ -57,6 +60,9 @@ def load_scan_config(path: str | None) -> ScanConfig:
         enable_azure_checks=bool(content.get("enable_azure_checks", False)),
         enable_gcp_checks=bool(content.get("enable_gcp_checks", False)),
         plugin_dir=content.get("plugin_dir"),
+        browser_assisted=bool(content.get("browser_assisted", False)),
+        browser_max_pages=content.get("browser_max_pages"),
+        browser_timeout_ms=content.get("browser_timeout_ms"),
     )
 
 

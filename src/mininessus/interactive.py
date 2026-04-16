@@ -65,6 +65,14 @@ def _simple_mode_args() -> list[str]:
         project_id = _prompt_optional("GCP project ID (press Enter to skip)")
         if project_id:
             args.extend(["--gcp-project-id", project_id])
+    if _mode_from_args(args) == "web" and _prompt_yes_no("Enable browser-assisted rendered discovery", default=False):
+        args.append("--browser-assisted")
+        browser_max_pages = _prompt_optional("Browser max pages (press Enter for default)")
+        if browser_max_pages:
+            args.extend(["--browser-max-pages", browser_max_pages])
+        browser_timeout_ms = _prompt_optional("Browser timeout in ms (press Enter for default)")
+        if browser_timeout_ms:
+            args.extend(["--browser-timeout-ms", browser_timeout_ms])
     if "--profile" in args and "linux" in args:
         args.extend(_prompt_ssh_args())
     if "--profile" in args and "windows" in args:
@@ -109,6 +117,14 @@ def _advanced_mode_args() -> list[str]:
         args.extend(["--udp-top-ports", udp_top_ports])
     if _prompt_yes_no("Skip host discovery (-Pn)", default=False):
         args.append("--skip-host-discovery")
+    if mode == "web" and _prompt_yes_no("Enable browser-assisted rendered discovery", default=False):
+        args.append("--browser-assisted")
+        browser_max_pages = _prompt_optional("Browser max pages (press Enter for default)")
+        if browser_max_pages:
+            args.extend(["--browser-max-pages", browser_max_pages])
+        browser_timeout_ms = _prompt_optional("Browser timeout in ms (press Enter for default)")
+        if browser_timeout_ms:
+            args.extend(["--browser-timeout-ms", browser_timeout_ms])
 
     nse_categories = _prompt_optional("NSE categories, comma-separated (safe,default,vuln)")
     args.extend(_split_csv_option("--nse-category", nse_categories))

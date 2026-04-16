@@ -12,6 +12,7 @@ from time import perf_counter
 from .aws_checks import run_aws_checks
 from .azure_checks import run_azure_checks
 from .checks import run_checks
+from .checks.http import configure_browser_assistance
 from .config import ScanConfig, load_scan_config, merge_scan_config
 from .discovery import DiscoveryError, build_extra_nmap_args, run_nmap
 from .gcp_checks import run_gcp_checks
@@ -118,6 +119,9 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--winrm-transport", default="ntlm", help="WinRM transport such as ntlm, kerberos, or basic")
     scan.add_argument("--winrm-ssl", action="store_true", help="Use HTTPS for WinRM connections")
     scan.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    scan.add_argument("--browser-assisted", action="store_true", help="Use a headless browser to render pages and discover JS-driven routes during web scans")
+    scan.add_argument("--browser-max-pages", type=int, default=None, help="Maximum rendered pages to inspect when --browser-assisted is enabled")
+    scan.add_argument("--browser-timeout-ms", type=int, default=None, help="Browser navigation timeout in milliseconds for --browser-assisted web scans")
 
     compare = subparsers.add_parser(
         "compare",
@@ -184,6 +188,9 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--ignore-id", action="append", default=None, help="Finding ID to suppress from the final report; can be repeated")
     batch.add_argument("--plugin-dir", default=None, help="Directory containing custom check plugins")
     batch.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    batch.add_argument("--browser-assisted", action="store_true", help="Use a headless browser to render pages and discover JS-driven routes during web scans")
+    batch.add_argument("--browser-max-pages", type=int, default=None, help="Maximum rendered pages to inspect when --browser-assisted is enabled")
+    batch.add_argument("--browser-timeout-ms", type=int, default=None, help="Browser navigation timeout in milliseconds for --browser-assisted web scans")
 
     dashboard = subparsers.add_parser(
         "dashboard",
@@ -333,6 +340,9 @@ def resolve_scan_config(args: argparse.Namespace) -> ScanConfig:
     config.enable_azure_checks = bool(args.enable_azure_checks or args.mode == "azure" or config.enable_azure_checks)
     config.enable_gcp_checks = bool(args.enable_gcp_checks or args.mode == "gcp" or config.enable_gcp_checks)
     config.plugin_dir = merge_scan_config(args.plugin_dir, config.plugin_dir)
+    config.browser_assisted = bool(args.browser_assisted or config.browser_assisted)
+    config.browser_max_pages = merge_scan_config(args.browser_max_pages, config.browser_max_pages)
+    config.browser_timeout_ms = merge_scan_config(args.browser_timeout_ms, config.browser_timeout_ms)
     config.ignore_ids.update(args.ignore_id or [])
     return apply_profile(config, config.profile)
 
@@ -372,6 +382,11 @@ def _run_scan_for_target(
     target: str,
 ) -> tuple[ScanResult, tuple[Path, Path, Path, Path | None, Path | None, Path | None], Path | None]:
     resolved_target, inferred_scheme = infer_scan_target(target)
+    configure_browser_assistance(
+        enabled=bool(scan_config.browser_assisted and args.mode == "web"),
+        max_pages=scan_config.browser_max_pages,
+        timeout_ms=scan_config.browser_timeout_ms,
+    )
     json_path, html_path, xml_path, markdown_path, csv_path, sarif_path = build_report_paths(args, target_override=target)
     start_clock = perf_counter()
     started_at = utc_now_iso()

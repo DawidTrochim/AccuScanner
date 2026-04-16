@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import ssl
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from ipaddress import ip_address
@@ -9,12 +10,14 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urljoin, urlparse, urlunparse
 from urllib.request import HTTPHandler, HTTPSHandler, Request, build_opener
 
+from ..browser import BrowserDiscoveryUnavailable, BrowserSurface, discover_browser_surface
 from .base import BaseCheck
 from ..models import Finding, HostResult
 from ..utils import sanitize_target
 
 
 USER_AGENT = "AccuScanner/1.0"
+logger = logging.getLogger("accuscanner")
 HTTP_PORTS = {80, 8080}
 HTTPS_PORTS = {443, 8443}
 DEFAULT_PAGE_MARKERS = {
@@ -191,6 +194,18 @@ STATIC_ASSET_EXTENSIONS = {
     ".mp3",
 }
 SURFACE_CRAWL_LIMIT = 8
+BROWSER_SURFACE_CRAWL_LIMIT = 5
+BROWSER_TIMEOUT_MS = 8000
+
+
+@dataclass(slots=True)
+class BrowserAssistConfig:
+    enabled: bool = False
+    max_pages: int = BROWSER_SURFACE_CRAWL_LIMIT
+    timeout_ms: int = BROWSER_TIMEOUT_MS
+
+
+BROWSER_ASSISTANCE = BrowserAssistConfig()
 
 
 @dataclass(slots=True)
@@ -202,6 +217,12 @@ class HttpObservation:
     cookies: list[str] = field(default_factory=list)
     redirected_to_https: bool = False
     error: str | None = None
+
+
+def configure_browser_assistance(*, enabled: bool, max_pages: int | None = None, timeout_ms: int | None = None) -> None:
+    BROWSER_ASSISTANCE.enabled = enabled
+    BROWSER_ASSISTANCE.max_pages = max_pages or BROWSER_SURFACE_CRAWL_LIMIT
+    BROWSER_ASSISTANCE.timeout_ms = timeout_ms or BROWSER_TIMEOUT_MS
 
 
 def fetch_http_observation(
@@ -1147,7 +1168,41 @@ class HttpSecurityCheck(BaseCheck):
             if self._looks_like_script_asset(normalized_current):
                 for endpoint in self._extract_script_endpoints(normalized_current, observation.body_preview, base_netloc):
                     discoveries.append(SurfaceDiscovery(kind="script_endpoint", url=endpoint))
+
+        discoveries.extend(self._discover_browser_assisted_surfaces(base_url, base_netloc))
         return discoveries
+
+    def _discover_browser_assisted_surfaces(self, base_url: str, base_netloc: str) -> list["SurfaceDiscovery"]:
+        if not BROWSER_ASSISTANCE.enabled:
+            return []
+        try:
+            browser_discoveries = discover_browser_surface(
+                base_url,
+                max_pages=BROWSER_ASSISTANCE.max_pages,
+                timeout_ms=BROWSER_ASSISTANCE.timeout_ms,
+            )
+        except BrowserDiscoveryUnavailable as exc:
+            logger.warning("Browser-assisted discovery unavailable: %s", exc)
+            return []
+        except Exception as exc:  # pragma: no cover - best effort discovery path
+            logger.warning("Browser-assisted discovery failed for %s: %s", base_url, exc)
+            return []
+
+        surfaces: list[SurfaceDiscovery] = []
+        for discovery in browser_discoveries:
+            normalized = discovery.value
+            if discovery.kind in {"page", "form_action", "script_asset", "script_endpoint"}:
+                normalized = self._normalize_surface_url(discovery.value)
+                if not normalized or urlparse(normalized).netloc != base_netloc:
+                    continue
+            elif discovery.kind in {"query_parameter", "form_field"}:
+                normalized = discovery.value.strip().lower()
+                if not normalized:
+                    continue
+            else:
+                continue
+            surfaces.append(SurfaceDiscovery(kind=discovery.kind, url=normalized))
+        return surfaces
 
     def _discover_seed_urls(self, base_url: str, base_netloc: str) -> list[str]:
         seeds: list[str] = []

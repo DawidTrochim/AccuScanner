@@ -60,6 +60,7 @@ AccuScanner is a defensive, Nessus-inspired vulnerability assessment tool built 
 - Sensitive file and path checks such as `.git`, `.env`, `phpinfo`, `server-status`, and backup paths
 - Admin and login surface detection
 - Passive same-host crawling for discovered pages, form actions, script assets, and script-derived endpoints
+- Optional browser-assisted rendered discovery for JS-heavy apps and SPA-style navigation
 - Attack-surface inventory for discovered pages, documents, static assets, form actions, query parameters, and form fields
 - Passive review for SQL/backend error leakage, suspicious input surfaces, file/upload flows, reset flows, SOAP/WSDL hints, WebDAV, and client-side storage usage
 - Lightweight fingerprinting for WordPress, phpMyAdmin, Jenkins, Grafana, Tomcat, Kibana, and Prometheus
@@ -162,6 +163,13 @@ pip install -e ".[azure]"
 az login
 ```
 
+If you want browser-assisted rendered web discovery:
+
+```bash
+pip install -e ".[browser]"
+python -m playwright install chromium
+```
+
 ## Windows Setup
 
 1. Install Python 3.11+
@@ -232,6 +240,12 @@ Web scan:
 
 ```bash
 accuscanner scan https://app.internal.example --mode web --timestamped-dir
+```
+
+Browser-assisted web scan:
+
+```bash
+accuscanner scan https://app.internal.example --mode web --browser-assisted --browser-max-pages 6 --timestamped-dir
 ```
 
 Interactive launcher:
@@ -395,7 +409,8 @@ GitHub Actions runs the test suite on pushes and pull requests using Ubuntu and 
 - Authenticated Linux checks require valid SSH access and currently target common Linux administrative patterns only
 - Authenticated Windows checks require valid WinRM access and currently focus on common host-hardening signals
 - Web review is intentionally passive and unauthenticated: it inventories and flags exposed attack surface, but it does not perform active exploitation or destructive testing
-- JavaScript-aware discovery is lightweight and best-effort rather than full browser-driven crawling
+- Default JavaScript-aware discovery is lightweight and best-effort rather than full browser-driven crawling
+- Browser-assisted mode adds rendered route, form, and client-request discovery, but it still avoids active exploitation and does not submit arbitrary POST workflows by default
 - Scan results still depend on network reachability and the target's filtering behavior
 
 ## Ethical Use

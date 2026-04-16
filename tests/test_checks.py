@@ -2,8 +2,14 @@ import ssl
 from urllib.error import URLError
 from unittest.mock import patch
 
+from mininessus.browser import BrowserSurface
 from mininessus.checks.banner import BannerExposureCheck
-from mininessus.checks.http import HttpObservation, HttpSecurityCheck, fetch_http_observation
+from mininessus.checks.http import (
+    HttpObservation,
+    HttpSecurityCheck,
+    configure_browser_assistance,
+    fetch_http_observation,
+)
 from mininessus.checks.ports import RiskyPortCheck
 from mininessus.checks.services import ServiceExposureCheck
 from mininessus.checks.tls import TLSDetails, TlsCertificateCheck
@@ -343,8 +349,57 @@ def test_http_security_check_does_not_treat_meta_names_or_partial_asset_paths_as
     assert "page: https://app.example/images/b" not in evidences
 
 
+@patch("mininessus.checks.http.discover_browser_surface")
+@patch("mininessus.checks.http.fetch_http_observation")
+def test_http_security_check_includes_browser_assisted_surface(mock_fetch, mock_browser_discovery):
+    def fake_fetch(
+        url: str,
+        timeout: int = 5,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+    ) -> HttpObservation:
+        if method in {"OPTIONS", "TRACE"}:
+            return HttpObservation(url=url, status=405, headers={}, redirected_to_https=False)
+        return HttpObservation(
+            url=url,
+            status=200,
+            headers={"server": "nginx"},
+            body_preview='<a href="/portal">Portal</a>',
+            redirected_to_https=False,
+        )
+
+    host = HostResult(
+        address="203.0.113.10",
+        hostname="app.example",
+        status="up",
+        ports=[PortService(port=443, protocol="tcp", state="open", service="https", tunnel="ssl")],
+    )
+    mock_fetch.side_effect = fake_fetch
+    mock_browser_discovery.return_value = [
+        BrowserSurface(kind="page", value="https://app.example/spa/dashboard"),
+        BrowserSurface(kind="form_action", value="https://app.example/api/login"),
+        BrowserSurface(kind="form_field", value="username"),
+        BrowserSurface(kind="query_parameter", value="token"),
+        BrowserSurface(kind="script_endpoint", value="https://app.example/api/me"),
+    ]
+
+    configure_browser_assistance(enabled=True, max_pages=3, timeout_ms=2000)
+    try:
+        findings = list(HttpSecurityCheck().run([host], "https://app.example"))
+    finally:
+        configure_browser_assistance(enabled=False)
+
+    evidences = {finding.evidence for finding in findings if finding.category == "attack_surface"}
+    assert "page: https://app.example/spa/dashboard" in evidences
+    assert "form_action: https://app.example/api/login" in evidences
+    assert "form_field: username" in evidences
+    assert "query_parameter: token" in evidences
+    assert "script_endpoint: https://app.example/api/me" in evidences
+
+
+@patch("mininessus.checks.tls.fetch_http_observation")
 @patch("mininessus.checks.tls.inspect_tls_certificate")
-def test_tls_check_detects_expired_and_self_signed(mock_inspect):
+def test_tls_check_detects_expired_and_self_signed(mock_inspect, mock_fetch_http_observation):
     mock_inspect.return_value = TLSDetails(
         not_after="Jan 01 00:00:00 2020 GMT",
         subject_cn="app.internal",
@@ -355,9 +410,21 @@ def test_tls_check_detects_expired_and_self_signed(mock_inspect):
         san_dns_names=["app.internal"],
         validation_error="certificate verify failed: self-signed certificate",
     )
+    mock_fetch_http_observation.return_value = HttpObservation(url="https://app.internal", status=200, headers={}, redirected_to_https=False)
     findings = list(TlsCertificateCheck().run([sample_host()], "10.0.0.5"))
     ids = {finding.id for finding in findings}
     assert {"TLS-001", "TLS-002", "TLS-003", "TLS-008"} <= ids
+
+
+@patch("mininessus.checks.tls.fetch_http_observation")
+@patch("mininessus.checks.tls.inspect_tls_certificate")
+def test_tls_check_skips_timeout_noise_when_https_fetch_succeeds(mock_inspect, mock_fetch_http_observation):
+    mock_inspect.side_effect = TimeoutError("timed out")
+    mock_fetch_http_observation.return_value = HttpObservation(url="https://app.internal", status=200, headers={}, redirected_to_https=False)
+
+    findings = list(TlsCertificateCheck().run([sample_host()], "https://app.internal"))
+
+    assert "TLS-004" not in {finding.id for finding in findings}
 
 
 @patch("mininessus.checks.tls.inspect_tls_certificate")
