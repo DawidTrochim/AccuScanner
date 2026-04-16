@@ -132,10 +132,13 @@ FILE_PARAMETER_NAMES = {"file", "path", "page", "template", "include", "document
 URL_PARAMETER_NAMES = {"url", "uri", "link", "dest", "redirect", "return", "next", "target"}
 FORM_FIELD_PATTERN = re.compile(r'name=["\']([A-Za-z0-9_.-]{1,64})["\']', re.IGNORECASE)
 FORM_TAG_PATTERN = re.compile(r"<form\b", re.IGNORECASE)
+FORM_BLOCK_PATTERN = re.compile(r"<form\b(?P<attrs>[^>]*)>(?P<body>.*?)</form>", re.IGNORECASE | re.DOTALL)
+FORM_ACTION_PATTERN = re.compile(r'action=["\']([^"\']+)["\']', re.IGNORECASE)
+FORM_METHOD_PATTERN = re.compile(r'method=["\']([^"\']+)["\']', re.IGNORECASE)
 LINK_ATTR_PATTERN = re.compile(r"""(href|src|action)=["']([^"'#]+)""", re.IGNORECASE)
 FILE_UPLOAD_PATTERN = re.compile(r'type=["\']file["\']', re.IGNORECASE)
 CSRF_TOKEN_PATTERN = re.compile(r'name=["\'](?:csrf|csrf_token|xsrf|authenticity_token|__requestverificationtoken)["\']', re.IGNORECASE)
-PASSWORD_RESET_PATTERN = re.compile(r"(forgot password|reset password|password reset)", re.IGNORECASE)
+PASSWORD_RESET_PATTERN = re.compile(r"(forgot password|reset password|password reset|reset your password|forgotten password)", re.IGNORECASE)
 WEB_STORAGE_PATTERN = re.compile(r"\b(?:localStorage|sessionStorage|indexedDB)\b", re.IGNORECASE)
 SOAP_MARKERS = ("soapenv:", "soap:", "wsdl", "?wsdl", "application/soap+xml")
 AJAX_MARKERS = ("xmlhttprequest", "jquery", "fetch(", "axios", "application/json")
@@ -143,6 +146,13 @@ SCRIPT_ENDPOINT_PATTERN = re.compile(
     r"""(?:"|')((?:https?://[^"'\\]+|/[A-Za-z0-9._~!$&()*+,;=:@%/\-?=&]+))(?:"|')""",
     re.IGNORECASE,
 )
+SCRIPT_API_CALL_PATTERNS = (
+    re.compile(r"""fetch\(\s*["']([^"']+)["']""", re.IGNORECASE),
+    re.compile(r"""axios\.(?:get|post|put|delete|patch)\(\s*["']([^"']+)["']""", re.IGNORECASE),
+    re.compile(r"""open\(\s*["'][A-Z]+["']\s*,\s*["']([^"']+)["']""", re.IGNORECASE),
+    re.compile(r"""url\s*:\s*["']([^"']+)["']""", re.IGNORECASE),
+)
+PASSWORD_RESET_FIELD_NAMES = {"email", "username", "user", "token", "reset_token", "new_password", "password", "confirm_password"}
 DOCUMENT_EXTENSIONS = {
     ".pdf",
     ".txt",
@@ -899,7 +909,8 @@ class HttpSecurityCheck(BaseCheck):
     def _build_form_posture_findings(self, target: str, observation: HttpObservation) -> list[Finding]:
         body_preview = observation.body_preview or ""
         findings: list[Finding] = []
-        if FORM_TAG_PATTERN.search(body_preview) and not CSRF_TOKEN_PATTERN.search(body_preview):
+        form_details = self._extract_form_details(observation.url, body_preview)
+        if form_details and not CSRF_TOKEN_PATTERN.search(body_preview):
             findings.append(
                 self.finding(
                     finding_id="HTTP-061",
@@ -914,7 +925,8 @@ class HttpSecurityCheck(BaseCheck):
                     tags=["web", "forms", "manual-review"],
                 )
             )
-        if FILE_UPLOAD_PATTERN.search(body_preview):
+        upload_form = next((detail for detail in form_details if detail.has_file_upload), None)
+        if upload_form:
             findings.append(
                 self.finding(
                     finding_id="HTTP-062",
@@ -923,13 +935,14 @@ class HttpSecurityCheck(BaseCheck):
                     category="web_surface",
                     target=target,
                     description="The page appears to expose a file upload field.",
-                    evidence=f"URL: {observation.url}",
+                    evidence=f"URL: {observation.url}; form action: {upload_form.action}; method: {upload_form.method}",
                     recommendation="Review upload validation, file type restrictions, storage paths, and malware scanning controls on the identified upload flow.",
                     confidence="medium",
                     tags=["web", "upload", "manual-review"],
                 )
             )
-        if PASSWORD_RESET_PATTERN.search(body_preview):
+        reset_form = next((detail for detail in form_details if self._looks_like_password_reset_form(detail)), None)
+        if reset_form or self._looks_like_password_reset_page(observation):
             findings.append(
                 self.finding(
                     finding_id="HTTP-063",
@@ -938,7 +951,9 @@ class HttpSecurityCheck(BaseCheck):
                     category="auth_surface",
                     target=target,
                     description="The response suggests a password reset workflow is reachable.",
-                    evidence=f"URL: {observation.url}",
+                    evidence=f"URL: {observation.url}" + (
+                        f"; form action: {reset_form.action}; fields: {', '.join(reset_form.fields[:6])}" if reset_form else ""
+                    ),
                     recommendation="Review reset token entropy, host header handling, expiration, and account verification controls on the reset workflow.",
                     confidence="low",
                     tags=["web", "auth", "manual-review"],
@@ -965,7 +980,8 @@ class HttpSecurityCheck(BaseCheck):
                     tags=["web", "client", "manual-review"],
                 )
             )
-        if any(marker in lowered for marker in AJAX_MARKERS):
+        ajax_matches = [marker for marker in AJAX_MARKERS if marker in lowered]
+        if len(ajax_matches) >= 2 or ("application/json" in lowered and any(token in lowered for token in ("fetch(", "axios", "xmlhttprequest"))):
             findings.append(
                 self.finding(
                     finding_id="HTTP-065",
@@ -974,7 +990,7 @@ class HttpSecurityCheck(BaseCheck):
                     category="client_security",
                     target=target,
                     description="The response suggests a JavaScript-heavy or API-driven application surface.",
-                    evidence=f"URL: {observation.url}",
+                    evidence=f"URL: {observation.url}; matched markers: {', '.join(sorted(set(ajax_matches or ['application/json'])))}",
                     recommendation="Review client-side request handling, API authorization, and JSON response controls for the identified application surface.",
                     confidence="low",
                     tags=["web", "client", "api", "manual-review"],
@@ -990,7 +1006,8 @@ class HttpSecurityCheck(BaseCheck):
             ]
         )
         findings: list[Finding] = []
-        if any(marker in text for marker in SOAP_MARKERS):
+        soap_matches = [marker for marker in SOAP_MARKERS if marker in text]
+        if "soapenv:" in text or "application/soap+xml" in text or len(soap_matches) >= 2:
             findings.append(
                 self.finding(
                     finding_id="HTTP-066",
@@ -999,7 +1016,7 @@ class HttpSecurityCheck(BaseCheck):
                     category="api_surface",
                     target=target,
                     description="The response suggests a SOAP-based service or WSDL-related application surface.",
-                    evidence=f"URL: {observation.url}",
+                    evidence=f"URL: {observation.url}; matched markers: {', '.join(sorted(set(soap_matches)))}",
                     recommendation="Review SOAP endpoint exposure, XML parser hardening, and access controls on the identified service.",
                     confidence="low",
                     tags=["web", "api", "xml", "manual-review"],
@@ -1111,6 +1128,8 @@ class HttpSecurityCheck(BaseCheck):
             elif self._looks_like_static_asset(joined_url):
                 kind = "static_asset"
             surfaces.append((kind, joined_url))
+        for form_detail in self._extract_form_details(base_url, body_preview):
+            surfaces.append(("form_action", form_detail.action))
         return surfaces
 
     @staticmethod
@@ -1123,7 +1142,11 @@ class HttpSecurityCheck(BaseCheck):
 
     def _extract_script_endpoints(self, base_url: str, body_preview: str, base_netloc: str) -> list[str]:
         endpoints: list[str] = []
-        for raw_value in SCRIPT_ENDPOINT_PATTERN.findall(body_preview or ""):
+        candidates: list[str] = []
+        for pattern in SCRIPT_API_CALL_PATTERNS:
+            candidates.extend(pattern.findall(body_preview or ""))
+        candidates.extend(SCRIPT_ENDPOINT_PATTERN.findall(body_preview or ""))
+        for raw_value in candidates:
             normalized = self._normalize_surface_url(urljoin(base_url, raw_value))
             if not normalized:
                 continue
@@ -1132,9 +1155,33 @@ class HttpSecurityCheck(BaseCheck):
                 continue
             if self._looks_like_document(normalized) or self._looks_like_static_asset(normalized) or self._looks_like_script_asset(normalized):
                 continue
+            if not self._looks_like_api_endpoint(normalized):
+                continue
             if normalized not in endpoints:
                 endpoints.append(normalized)
         return endpoints
+
+    def _extract_form_details(self, base_url: str, body_preview: str) -> list["FormDetail"]:
+        details: list[FormDetail] = []
+        for match in FORM_BLOCK_PATTERN.finditer(body_preview or ""):
+            attrs = match.group("attrs") or ""
+            body = match.group("body") or ""
+            action_match = FORM_ACTION_PATTERN.search(attrs)
+            method_match = FORM_METHOD_PATTERN.search(attrs)
+            raw_action = action_match.group(1) if action_match else ""
+            normalized_action = self._normalize_surface_url(urljoin(base_url, raw_action or urlparse(base_url).path or "/"))
+            if not normalized_action:
+                continue
+            fields = sorted({field_name.lower() for field_name in FORM_FIELD_PATTERN.findall(body)})
+            details.append(
+                FormDetail(
+                    action=normalized_action,
+                    method=(method_match.group(1).upper() if method_match else "GET"),
+                    fields=fields,
+                    has_file_upload=bool(FILE_UPLOAD_PATTERN.search(body)),
+                )
+            )
+        return details
 
     @staticmethod
     def _path_extension(url: str) -> str:
@@ -1156,6 +1203,29 @@ class HttpSecurityCheck(BaseCheck):
         return cls._path_extension(url) == ".js"
 
     @staticmethod
+    def _looks_like_api_endpoint(url: str) -> bool:
+        lowered = urlparse(url).path.lower()
+        return any(token in lowered for token in ("/api", "/graphql", "/rest", "/services", "/json", "/xml", "/soap", "/ajax", "/endpoint"))
+
+    @staticmethod
+    def _looks_like_password_reset_form(form_detail: "FormDetail") -> bool:
+        action_text = form_detail.action.lower()
+        field_set = set(form_detail.fields)
+        return (
+            any(token in action_text for token in ("reset", "forgot", "recover", "password"))
+            or ("email" in field_set and len(field_set & PASSWORD_RESET_FIELD_NAMES) >= 2)
+            or "reset_token" in field_set
+        )
+
+    @staticmethod
+    def _looks_like_password_reset_page(observation: HttpObservation) -> bool:
+        lowered_url = observation.url.lower()
+        lowered_body = (observation.body_preview or "").lower()
+        if not PASSWORD_RESET_PATTERN.search(lowered_body):
+            return False
+        return any(token in lowered_url or token in lowered_body for token in ("reset", "forgot", "recover"))
+
+    @staticmethod
     def _normalize_surface_url(url: str) -> str:
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -1175,3 +1245,11 @@ class SurfaceDiscovery:
     kind: str
     url: str
     observation: HttpObservation | None = None
+
+
+@dataclass(slots=True)
+class FormDetail:
+    action: str
+    method: str
+    fields: list[str]
+    has_file_upload: bool = False
