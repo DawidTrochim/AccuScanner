@@ -369,25 +369,36 @@ HTML_TEMPLATE = Template(
 
       <section class="panel">
         <h2>Discovered Attack Surface</h2>
-        {% set surface_findings = report.findings | selectattr("category", "equalto", "attack_surface") | list %}
-        {% if surface_findings %}
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>ID</th><th>Target</th><th>Evidence</th><th>Confidence</th></tr>
-            </thead>
-            <tbody>
-              {% for finding in surface_findings %}
-              <tr>
-                <td>{{ finding.id }}</td>
-                <td>{{ finding.target }}</td>
-                <td>{{ finding.evidence }}</td>
-                <td>{{ finding.confidence }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
+        {% if report.attack_surface %}
+        {% for target, inventory in report.attack_surface.items() %}
+        <section class="asset-group">
+          <h3 class="asset-title">{{ target }}</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Type</th><th>Count</th><th>Examples</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Routes</td>
+                  <td>{{ inventory.routes | length }}</td>
+                  <td>{{ inventory.routes[:8] | join(", ") or "-" }}</td>
+                </tr>
+                <tr>
+                  <td>Form Actions</td>
+                  <td>{{ inventory.form_actions | length }}</td>
+                  <td>{{ inventory.form_actions[:8] | join(", ") or "-" }}</td>
+                </tr>
+                <tr>
+                  <td>Script Assets</td>
+                  <td>{{ inventory.script_assets | length }}</td>
+                  <td>{{ inventory.script_assets[:8] | join(", ") or "-" }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        {% endfor %}
         {% else %}
         <div class="empty">No additional same-host routes, forms, or script assets were cataloged during this scan.</div>
         {% endif %}

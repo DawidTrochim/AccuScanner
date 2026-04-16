@@ -59,7 +59,10 @@ def test_reporting_writers_emit_markdown_csv_and_sarif():
         write_sarif_report(result, sarif_path)
 
         assert "AccuScanner Report" in markdown_path.read_text(encoding="utf-8")
-        assert "Discovered Attack Surface" in html_path.read_text(encoding="utf-8")
+        html_text = html_path.read_text(encoding="utf-8")
+        assert "Discovered Attack Surface" in html_text
+        assert "Routes" in html_text
+        assert "https://host-a/admin" in html_text
         assert "HTTP-005" in csv_path.read_text(encoding="utf-8")
         assert '"version": "2.1.0"' in sarif_path.read_text(encoding="utf-8")
     finally:

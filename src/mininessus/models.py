@@ -127,23 +127,49 @@ class ScanResult:
         return dict(sorted(grouped.items(), key=lambda item: item[0]))
 
     def to_dict(self) -> dict[str, Any]:
+        deduplicated_findings = self.deduplicated_findings()
+        attack_surface_inventory = self.attack_surface_inventory()
         return {
             "metadata": asdict(self.metadata),
             "summary": {
                 "severity_totals": self.severity_totals(),
                 "severity_score": self.severity_score(),
-                "total_findings": len(self.deduplicated_findings()),
-                "priority_score": sum(self.priority_score(finding) for finding in self.deduplicated_findings()),
+                "total_findings": len(deduplicated_findings),
+                "priority_score": sum(self.priority_score(finding) for finding in deduplicated_findings),
                 "top_risks": [asdict(finding) for finding in self.top_risks()],
             },
             "hosts": [asdict(host) for host in self.hosts],
-            "findings": [asdict(finding) for finding in self.deduplicated_findings()],
+            "findings": [asdict(finding) for finding in deduplicated_findings],
             "findings_by_target": {
                 target: [asdict(finding) for finding in findings]
                 for target, findings in self.findings_by_target().items()
             },
+            "attack_surface": attack_surface_inventory,
             "errors": self.errors,
         }
+
+    def attack_surface_inventory(self) -> dict[str, Any]:
+        inventory: dict[str, dict[str, Any]] = {}
+        for finding in self.deduplicated_findings():
+            if finding.category != "attack_surface":
+                continue
+            kind, _, location = finding.evidence.partition(": ")
+            target_inventory = inventory.setdefault(
+                finding.target,
+                {
+                    "routes": [],
+                    "form_actions": [],
+                    "script_assets": [],
+                },
+            )
+            normalized_kind = {
+                "route": "routes",
+                "form_action": "form_actions",
+                "script_asset": "script_assets",
+            }.get(kind, "routes")
+            if location and location not in target_inventory[normalized_kind]:
+                target_inventory[normalized_kind].append(location)
+        return inventory
 
 
 @dataclass(slots=True)
