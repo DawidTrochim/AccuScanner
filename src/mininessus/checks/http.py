@@ -139,6 +139,45 @@ PASSWORD_RESET_PATTERN = re.compile(r"(forgot password|reset password|password r
 WEB_STORAGE_PATTERN = re.compile(r"\b(?:localStorage|sessionStorage|indexedDB)\b", re.IGNORECASE)
 SOAP_MARKERS = ("soapenv:", "soap:", "wsdl", "?wsdl", "application/soap+xml")
 AJAX_MARKERS = ("xmlhttprequest", "jquery", "fetch(", "axios", "application/json")
+SCRIPT_ENDPOINT_PATTERN = re.compile(
+    r"""(?:"|')((?:https?://[^"'\\]+|/[A-Za-z0-9._~!$&()*+,;=:@%/\-?=&]+))(?:"|')""",
+    re.IGNORECASE,
+)
+DOCUMENT_EXTENSIONS = {
+    ".pdf",
+    ".txt",
+    ".csv",
+    ".zip",
+    ".rar",
+    ".7z",
+    ".tar",
+    ".gz",
+    ".tgz",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+}
+STATIC_ASSET_EXTENSIONS = {
+    ".css",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".ico",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".webp",
+    ".bmp",
+    ".mp4",
+    ".webm",
+    ".mp3",
+}
 SURFACE_CRAWL_LIMIT = 8
 
 
@@ -987,11 +1026,12 @@ class HttpSecurityCheck(BaseCheck):
     def _build_attack_surface_findings(self, target: str, base_url: str, base_observation: HttpObservation) -> list[Finding]:
         findings: list[Finding] = []
         discoveries = self._discover_same_host_surfaces(base_url, base_observation)
-        seen_urls: set[str] = set()
+        seen_items: set[tuple[str, str]] = set()
         for discovery in discoveries:
-            if discovery.url in seen_urls:
+            discovery_key = (discovery.kind, discovery.url)
+            if discovery_key in seen_items:
                 continue
-            seen_urls.add(discovery.url)
+            seen_items.add(discovery_key)
             findings.append(
                 self.finding(
                     finding_id=f"HTTP-068-{discovery.kind}",
@@ -1006,7 +1046,7 @@ class HttpSecurityCheck(BaseCheck):
                     tags=["web", "surface", "manual-review"],
                 )
             )
-            if discovery.observation and discovery.kind in {"route", "form_action"}:
+            if discovery.observation and discovery.kind in {"page", "form_action"}:
                 findings.extend(self._build_passive_injection_findings(target, discovery.observation))
                 findings.extend(self._build_form_posture_findings(target, discovery.observation))
                 findings.extend(self._build_client_side_surface_findings(target, discovery.observation))
@@ -1034,15 +1074,25 @@ class HttpSecurityCheck(BaseCheck):
                 normalized_url = self._normalize_surface_url(discovered_url)
                 if not normalized_url or urlparse(normalized_url).netloc != base_netloc:
                     continue
-                if normalized_url not in {item.url for item in discoveries}:
+                if (kind, normalized_url) not in {(item.kind, item.url) for item in discoveries}:
                     discoveries.append(SurfaceDiscovery(kind=kind, url=normalized_url))
-                if kind in {"route", "form_action"} and normalized_url not in visited and normalized_url not in queue and len(visited) + len(queue) < SURFACE_CRAWL_LIMIT:
+                if kind in {"page", "form_action"} and normalized_url not in visited and normalized_url not in queue and len(visited) + len(queue) < SURFACE_CRAWL_LIMIT:
                     queue.append(normalized_url)
-                if kind in {"route", "form_action"}:
+                if kind in {"page", "form_action", "script_asset"}:
                     for item in discoveries:
                         if item.url == normalized_url and item.kind == kind and item.observation is None:
                             item.observation = fetch_http_observation(normalized_url)
+                            if kind == "script_asset" and item.observation.status and item.observation.status < 500:
+                                for endpoint in self._extract_script_endpoints(normalized_url, item.observation.body_preview, base_netloc):
+                                    discoveries.append(SurfaceDiscovery(kind="script_endpoint", url=endpoint))
                             break
+            for parameter_name in self._extract_query_parameter_names(observation.url):
+                discoveries.append(SurfaceDiscovery(kind="query_parameter", url=parameter_name))
+            for field_name in self._extract_form_field_names(observation.body_preview):
+                discoveries.append(SurfaceDiscovery(kind="form_field", url=field_name))
+            if self._looks_like_script_asset(normalized_current):
+                for endpoint in self._extract_script_endpoints(normalized_current, observation.body_preview, base_netloc):
+                    discoveries.append(SurfaceDiscovery(kind="script_endpoint", url=endpoint))
         return discoveries
 
     def _extract_surface_urls(self, base_url: str, body_preview: str) -> list[tuple[str, str]]:
@@ -1051,13 +1101,59 @@ class HttpSecurityCheck(BaseCheck):
             joined_url = self._normalize_surface_url(urljoin(base_url, raw_url))
             if not joined_url:
                 continue
-            kind = "route"
+            kind = "page"
             if attribute.lower() == "src" and raw_url.lower().endswith(".js"):
                 kind = "script_asset"
             elif attribute.lower() == "action":
                 kind = "form_action"
+            elif self._looks_like_document(joined_url):
+                kind = "document"
+            elif self._looks_like_static_asset(joined_url):
+                kind = "static_asset"
             surfaces.append((kind, joined_url))
         return surfaces
+
+    @staticmethod
+    def _extract_query_parameter_names(url: str) -> list[str]:
+        return sorted({name for name, _ in parse_qsl(urlparse(url).query, keep_blank_values=True) if name})
+
+    @staticmethod
+    def _extract_form_field_names(body_preview: str) -> list[str]:
+        return sorted({field_name.lower() for field_name in FORM_FIELD_PATTERN.findall(body_preview or "")})
+
+    def _extract_script_endpoints(self, base_url: str, body_preview: str, base_netloc: str) -> list[str]:
+        endpoints: list[str] = []
+        for raw_value in SCRIPT_ENDPOINT_PATTERN.findall(body_preview or ""):
+            normalized = self._normalize_surface_url(urljoin(base_url, raw_value))
+            if not normalized:
+                continue
+            parsed = urlparse(normalized)
+            if parsed.netloc != base_netloc:
+                continue
+            if self._looks_like_document(normalized) or self._looks_like_static_asset(normalized) or self._looks_like_script_asset(normalized):
+                continue
+            if normalized not in endpoints:
+                endpoints.append(normalized)
+        return endpoints
+
+    @staticmethod
+    def _path_extension(url: str) -> str:
+        path = urlparse(url).path.lower()
+        if "." not in path.rsplit("/", 1)[-1]:
+            return ""
+        return "." + path.rsplit(".", 1)[-1]
+
+    @classmethod
+    def _looks_like_document(cls, url: str) -> bool:
+        return cls._path_extension(url) in DOCUMENT_EXTENSIONS
+
+    @classmethod
+    def _looks_like_static_asset(cls, url: str) -> bool:
+        return cls._path_extension(url) in STATIC_ASSET_EXTENSIONS
+
+    @classmethod
+    def _looks_like_script_asset(cls, url: str) -> bool:
+        return cls._path_extension(url) == ".js"
 
     @staticmethod
     def _normalize_surface_url(url: str) -> str:

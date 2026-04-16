@@ -380,9 +380,19 @@ HTML_TEMPLATE = Template(
               </thead>
               <tbody>
                 <tr>
-                  <td>Routes</td>
-                  <td>{{ inventory.routes | length }}</td>
-                  <td>{{ inventory.routes[:8] | join(", ") or "-" }}</td>
+                  <td>Pages</td>
+                  <td>{{ inventory.pages | length }}</td>
+                  <td>{{ inventory.pages[:8] | join(", ") or "-" }}</td>
+                </tr>
+                <tr>
+                  <td>Documents</td>
+                  <td>{{ inventory.documents | length }}</td>
+                  <td>{{ inventory.documents[:8] | join(", ") or "-" }}</td>
+                </tr>
+                <tr>
+                  <td>Static Assets</td>
+                  <td>{{ inventory.static_assets | length }}</td>
+                  <td>{{ inventory.static_assets[:8] | join(", ") or "-" }}</td>
                 </tr>
                 <tr>
                   <td>Form Actions</td>
@@ -394,13 +404,28 @@ HTML_TEMPLATE = Template(
                   <td>{{ inventory.script_assets | length }}</td>
                   <td>{{ inventory.script_assets[:8] | join(", ") or "-" }}</td>
                 </tr>
+                <tr>
+                  <td>Query Parameters</td>
+                  <td>{{ inventory.query_parameters | length }}</td>
+                  <td>{{ inventory.query_parameters[:12] | join(", ") or "-" }}</td>
+                </tr>
+                <tr>
+                  <td>Form Fields</td>
+                  <td>{{ inventory.form_fields | length }}</td>
+                  <td>{{ inventory.form_fields[:12] | join(", ") or "-" }}</td>
+                </tr>
+                <tr>
+                  <td>Script Endpoints</td>
+                  <td>{{ inventory.script_endpoints | length }}</td>
+                  <td>{{ inventory.script_endpoints[:8] | join(", ") or "-" }}</td>
+                </tr>
               </tbody>
             </table>
           </div>
         </section>
         {% endfor %}
         {% else %}
-        <div class="empty">No additional same-host routes, forms, or script assets were cataloged during this scan.</div>
+        <div class="empty">No additional same-host application pages, assets, forms, or parameter signals were cataloged during this scan.</div>
         {% endif %}
       </section>
 

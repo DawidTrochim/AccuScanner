@@ -205,9 +205,12 @@ def test_http_security_check_discovers_same_host_attack_surface(mock_fetch):
     findings = list(HttpSecurityCheck().run([host], "https://app.example"))
 
     surface_ids = {finding.id for finding in findings if finding.category == "attack_surface"}
-    assert "HTTP-068-route" in surface_ids
+    assert "HTTP-068-page" in surface_ids
     assert "HTTP-068-form_action" in surface_ids
     assert "HTTP-068-script_asset" in surface_ids
+    assert "HTTP-068-query_parameter" in surface_ids
+    assert "HTTP-068-form_field" in surface_ids
+    assert "HTTP-068-script_endpoint" in surface_ids
 
 
 @patch("mininessus.checks.tls.inspect_tls_certificate")

@@ -97,14 +97,20 @@ class ScanResult:
 
     def severity_totals(self) -> dict[str, int]:
         totals = {severity: 0 for severity in SEVERITY_ORDER}
-        for finding in self.deduplicated_findings():
+        for finding in self.actionable_findings():
             severity = finding.severity.lower()
             totals.setdefault(severity, 0)
             totals[severity] += 1
         return totals
 
     def severity_score(self) -> int:
-        return sum(SEVERITY_SCORES.get(finding.severity.lower(), 0) for finding in self.deduplicated_findings())
+        return sum(SEVERITY_SCORES.get(finding.severity.lower(), 0) for finding in self.actionable_findings())
+
+    def actionable_findings(self) -> list[Finding]:
+        return [finding for finding in self.deduplicated_findings() if finding.category != "attack_surface"]
+
+    def attack_surface_findings(self) -> list[Finding]:
+        return [finding for finding in self.deduplicated_findings() if finding.category == "attack_surface"]
 
     def priority_score(self, finding: Finding) -> int:
         base = SEVERITY_SCORES.get(finding.severity.lower(), 0)
@@ -114,32 +120,32 @@ class ScanResult:
 
     def top_risks(self, limit: int = 5) -> list[Finding]:
         return sorted(
-            self.deduplicated_findings(),
+            self.actionable_findings(),
             key=lambda finding: (-self.priority_score(finding), -SEVERITY_SCORES.get(finding.severity.lower(), 0), finding.id, finding.target),
         )[:limit]
 
     def findings_by_target(self) -> dict[str, list[Finding]]:
         grouped: dict[str, list[Finding]] = {}
-        for finding in self.deduplicated_findings():
+        for finding in self.actionable_findings():
             grouped.setdefault(finding.target, []).append(finding)
         for findings in grouped.values():
             findings.sort(key=lambda finding: (-self.priority_score(finding), -SEVERITY_SCORES.get(finding.severity.lower(), 0), finding.id))
         return dict(sorted(grouped.items(), key=lambda item: item[0]))
 
     def to_dict(self) -> dict[str, Any]:
-        deduplicated_findings = self.deduplicated_findings()
+        actionable_findings = self.actionable_findings()
         attack_surface_inventory = self.attack_surface_inventory()
         return {
             "metadata": asdict(self.metadata),
             "summary": {
                 "severity_totals": self.severity_totals(),
                 "severity_score": self.severity_score(),
-                "total_findings": len(deduplicated_findings),
-                "priority_score": sum(self.priority_score(finding) for finding in deduplicated_findings),
+                "total_findings": len(actionable_findings),
+                "priority_score": sum(self.priority_score(finding) for finding in actionable_findings),
                 "top_risks": [asdict(finding) for finding in self.top_risks()],
             },
             "hosts": [asdict(host) for host in self.hosts],
-            "findings": [asdict(finding) for finding in deduplicated_findings],
+            "findings": [asdict(finding) for finding in actionable_findings],
             "findings_by_target": {
                 target: [asdict(finding) for finding in findings]
                 for target, findings in self.findings_by_target().items()
@@ -150,23 +156,31 @@ class ScanResult:
 
     def attack_surface_inventory(self) -> dict[str, Any]:
         inventory: dict[str, dict[str, Any]] = {}
-        for finding in self.deduplicated_findings():
-            if finding.category != "attack_surface":
-                continue
+        for finding in self.attack_surface_findings():
             kind, _, location = finding.evidence.partition(": ")
             target_inventory = inventory.setdefault(
                 finding.target,
                 {
-                    "routes": [],
+                    "pages": [],
+                    "documents": [],
+                    "static_assets": [],
                     "form_actions": [],
                     "script_assets": [],
+                    "query_parameters": [],
+                    "form_fields": [],
+                    "script_endpoints": [],
                 },
             )
             normalized_kind = {
-                "route": "routes",
+                "page": "pages",
+                "document": "documents",
+                "static_asset": "static_assets",
                 "form_action": "form_actions",
                 "script_asset": "script_assets",
-            }.get(kind, "routes")
+                "query_parameter": "query_parameters",
+                "form_field": "form_fields",
+                "script_endpoint": "script_endpoints",
+            }.get(kind, "pages")
             if location and location not in target_inventory[normalized_kind]:
                 target_inventory[normalized_kind].append(location)
         return inventory

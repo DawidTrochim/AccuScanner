@@ -59,6 +59,9 @@ AccuScanner is a defensive, Nessus-inspired vulnerability assessment tool built 
 - `Server` header disclosure
 - Sensitive file and path checks such as `.git`, `.env`, `phpinfo`, `server-status`, and backup paths
 - Admin and login surface detection
+- Passive same-host crawling for discovered pages, form actions, script assets, and script-derived endpoints
+- Attack-surface inventory for discovered pages, documents, static assets, form actions, query parameters, and form fields
+- Passive review for SQL/backend error leakage, suspicious input surfaces, file/upload flows, reset flows, SOAP/WSDL hints, WebDAV, and client-side storage usage
 - Lightweight fingerprinting for WordPress, phpMyAdmin, Jenkins, Grafana, Tomcat, Kibana, and Prometheus
 
 ### TLS Checks
@@ -231,6 +234,12 @@ Web scan:
 accuscanner scan https://app.internal.example --mode web --timestamped-dir
 ```
 
+Interactive launcher:
+
+```bash
+python -m accuscanner
+```
+
 AWS posture scan:
 
 ```bash
@@ -318,6 +327,7 @@ Example automation assets live in [examples/scan-profile.yml](examples/scan-prof
 - Top risks section for fast triage
 - Host inventory and open ports
 - Asset-grouped remediation recommendations
+- Dedicated discovered attack-surface inventory for web scans
 - Full finding cards with evidence, confidence, tags, and remediation guidance
 
 ## Dashboard Output
@@ -384,7 +394,8 @@ GitHub Actions runs the test suite on pushes and pull requests using Ubuntu and 
 - AWS and Azure checks depend on valid credentials and permissions
 - Authenticated Linux checks require valid SSH access and currently target common Linux administrative patterns only
 - Authenticated Windows checks require valid WinRM access and currently focus on common host-hardening signals
-- TLS and web checks are intentionally lightweight and unauthenticated
+- Web review is intentionally passive and unauthenticated: it inventories and flags exposed attack surface, but it does not perform active exploitation or destructive testing
+- JavaScript-aware discovery is lightweight and best-effort rather than full browser-driven crawling
 - Scan results still depend on network reachability and the target's filtering behavior
 
 ## Ethical Use

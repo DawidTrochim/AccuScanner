@@ -28,14 +28,26 @@ def _sample_result() -> ScanResult:
                 tags=["web", "transport"],
             ),
             Finding(
-                id="HTTP-068-route",
-                title="Discovered route surface",
+                id="HTTP-068-page",
+                title="Discovered page surface",
                 severity="info",
                 category="attack_surface",
                 target="host-a",
-                description="A same-host route was discovered.",
-                evidence="route: https://host-a/admin",
-                recommendation="Review the route.",
+                description="A same-host page was discovered.",
+                evidence="page: https://host-a/admin",
+                recommendation="Review the page.",
+                confidence="medium",
+                tags=["web", "surface"],
+            ),
+            Finding(
+                id="HTTP-068-query_parameter",
+                title="Discovered query parameter surface",
+                severity="info",
+                category="attack_surface",
+                target="host-a",
+                description="A query parameter was discovered.",
+                evidence="query_parameter: id",
+                recommendation="Review the parameter.",
                 confidence="medium",
                 tags=["web", "surface"],
             ),
@@ -61,9 +73,12 @@ def test_reporting_writers_emit_markdown_csv_and_sarif():
         assert "AccuScanner Report" in markdown_path.read_text(encoding="utf-8")
         html_text = html_path.read_text(encoding="utf-8")
         assert "Discovered Attack Surface" in html_text
-        assert "Routes" in html_text
+        assert "Pages" in html_text
+        assert "Query Parameters" in html_text
         assert "https://host-a/admin" in html_text
+        assert "query_parameter: id" not in html_text
         assert "HTTP-005" in csv_path.read_text(encoding="utf-8")
+        assert "HTTP-068-page" not in csv_path.read_text(encoding="utf-8")
         assert '"version": "2.1.0"' in sarif_path.read_text(encoding="utf-8")
     finally:
         markdown_path.unlink(missing_ok=True)
