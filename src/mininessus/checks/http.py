@@ -153,6 +153,8 @@ SCRIPT_API_CALL_PATTERNS = (
     re.compile(r"""url\s*:\s*["']([^"']+)["']""", re.IGNORECASE),
 )
 PASSWORD_RESET_FIELD_NAMES = {"email", "username", "user", "token", "reset_token", "new_password", "password", "confirm_password"}
+ROBOTS_PATH_PATTERN = re.compile(r"^(?:allow|disallow):\s*(\S+)", re.IGNORECASE | re.MULTILINE)
+SITEMAP_LOC_PATTERN = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.IGNORECASE)
 DOCUMENT_EXTENSIONS = {
     ".pdf",
     ".txt",
@@ -1077,6 +1079,16 @@ class HttpSecurityCheck(BaseCheck):
         visited: set[str] = set()
         base_netloc = urlparse(base_url).netloc
 
+        for seed_url in self._discover_seed_urls(base_url, base_netloc):
+            normalized_seed = self._normalize_surface_url(seed_url)
+            if not normalized_seed:
+                continue
+            discovered_kind = "document" if self._looks_like_document(normalized_seed) else "page"
+            if (discovered_kind, normalized_seed) not in {(item.kind, item.url) for item in discoveries}:
+                discoveries.append(SurfaceDiscovery(kind=discovered_kind, url=normalized_seed))
+            if discovered_kind == "page" and normalized_seed not in queue:
+                queue.append(normalized_seed)
+
         while queue and len(visited) < SURFACE_CRAWL_LIMIT:
             current_url = queue.pop(0)
             normalized_current = self._normalize_surface_url(current_url)
@@ -1111,6 +1123,25 @@ class HttpSecurityCheck(BaseCheck):
                 for endpoint in self._extract_script_endpoints(normalized_current, observation.body_preview, base_netloc):
                     discoveries.append(SurfaceDiscovery(kind="script_endpoint", url=endpoint))
         return discoveries
+
+    def _discover_seed_urls(self, base_url: str, base_netloc: str) -> list[str]:
+        seeds: list[str] = []
+        for seed_path in ("/robots.txt", "/sitemap.xml"):
+            observation = fetch_http_observation(urljoin(base_url + "/", seed_path.lstrip("/")))
+            if not observation.status or observation.status >= 400:
+                continue
+            if seed_path.endswith("robots.txt"):
+                candidates = ROBOTS_PATH_PATTERN.findall(observation.body_preview or "")
+                normalized_candidates = [urljoin(base_url + "/", candidate.lstrip("/")) for candidate in candidates]
+            else:
+                normalized_candidates = SITEMAP_LOC_PATTERN.findall(observation.body_preview or "")
+            for candidate in normalized_candidates:
+                normalized = self._normalize_surface_url(candidate)
+                if not normalized or urlparse(normalized).netloc != base_netloc:
+                    continue
+                if normalized not in seeds:
+                    seeds.append(normalized)
+        return seeds
 
     def _extract_surface_urls(self, base_url: str, body_preview: str) -> list[tuple[str, str]]:
         surfaces: list[tuple[str, str]] = []
@@ -1223,7 +1254,7 @@ class HttpSecurityCheck(BaseCheck):
         lowered_body = (observation.body_preview or "").lower()
         if not PASSWORD_RESET_PATTERN.search(lowered_body):
             return False
-        return any(token in lowered_url or token in lowered_body for token in ("reset", "forgot", "recover"))
+        return any(token in lowered_url for token in ("reset", "forgot", "recover"))
 
     @staticmethod
     def _normalize_surface_url(url: str) -> str:

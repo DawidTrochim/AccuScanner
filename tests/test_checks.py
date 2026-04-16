@@ -61,10 +61,10 @@ def test_http_security_check_flags_missing_headers_and_surfaces(mock_fetch):
             return HttpObservation(url=url, status=200, headers={}, body_preview='{"status":"UP"}')
         if url.endswith("/backup"):
             return HttpObservation(
-                url="http://10.0.0.5/backup?id=42&sort=asc&file=report.txt&url=https://example.com",
+                url="http://10.0.0.5/account/reset?id=42&sort=asc&file=report.txt&url=https://example.com",
                 status=200,
                 headers={},
-                body_preview='<form><input name="search"><input name="category"><input type="file" name="upload"></form> forgot password localStorage',
+                body_preview='<form action="/account/reset" method="post"><input name="email"><input name="token"><input type="file" name="upload"></form> reset password localStorage',
             )
         if url.endswith("/crossdomain.xml"):
             return HttpObservation(url=url, status=200, headers={"content-type": "application/xml"}, body_preview='<cross-domain-policy></cross-domain-policy>')
@@ -211,6 +211,73 @@ def test_http_security_check_discovers_same_host_attack_surface(mock_fetch):
     assert "HTTP-068-query_parameter" in surface_ids
     assert "HTTP-068-form_field" in surface_ids
     assert "HTTP-068-script_endpoint" in surface_ids
+
+
+@patch("mininessus.checks.http.fetch_http_observation")
+def test_http_security_check_uses_robots_and_sitemap_as_discovery_seeds(mock_fetch):
+    def fake_fetch(
+        url: str,
+        timeout: int = 5,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+    ) -> HttpObservation:
+        if method in {"OPTIONS", "TRACE"}:
+            return HttpObservation(url=url, status=405, headers={}, redirected_to_https=False)
+        if url == "https://app.example":
+            return HttpObservation(url=url, status=200, headers={"server": "nginx"}, body_preview="Home", redirected_to_https=False)
+        if url == "https://app.example/robots.txt":
+            return HttpObservation(url=url, status=200, headers={"content-type": "text/plain"}, body_preview="Allow: /hidden\nDisallow: /private/report.pdf", redirected_to_https=False)
+        if url == "https://app.example/sitemap.xml":
+            return HttpObservation(url=url, status=200, headers={"content-type": "application/xml"}, body_preview="<urlset><url><loc>https://app.example/catalog</loc></url></urlset>", redirected_to_https=False)
+        if url in {"https://app.example/hidden", "https://app.example/catalog"}:
+            return HttpObservation(url=url, status=200, headers={"server": "nginx"}, body_preview="Page", redirected_to_https=False)
+        return HttpObservation(url=url, status=404, headers={}, body_preview="Not Found", redirected_to_https=False)
+
+    host = HostResult(
+        address="203.0.113.10",
+        hostname="app.example",
+        status="up",
+        ports=[PortService(port=443, protocol="tcp", state="open", service="https", tunnel="ssl")],
+    )
+
+    mock_fetch.side_effect = fake_fetch
+    findings = list(HttpSecurityCheck().run([host], "https://app.example"))
+
+    evidences = {finding.evidence for finding in findings if finding.category == "attack_surface"}
+    assert "page: https://app.example/hidden" in evidences
+    assert "page: https://app.example/catalog" in evidences
+    assert "document: https://app.example/private/report.pdf" in evidences
+
+
+@patch("mininessus.checks.http.fetch_http_observation")
+def test_http_security_check_does_not_flag_password_reset_from_loose_training_text(mock_fetch):
+    def fake_fetch(
+        url: str,
+        timeout: int = 5,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+    ) -> HttpObservation:
+        if method in {"OPTIONS", "TRACE"}:
+            return HttpObservation(url=url, status=405, headers={}, redirected_to_https=False)
+        return HttpObservation(
+            url=url,
+            status=200,
+            headers={"server": "nginx"},
+            body_preview="This training page discusses password reset poisoning and forgot password attacks.",
+            redirected_to_https=False,
+        )
+
+    host = HostResult(
+        address="203.0.113.10",
+        hostname="app.example",
+        status="up",
+        ports=[PortService(port=443, protocol="tcp", state="open", service="https", tunnel="ssl")],
+    )
+
+    mock_fetch.side_effect = fake_fetch
+    findings = list(HttpSecurityCheck().run([host], "https://app.example"))
+
+    assert "HTTP-063" not in {finding.id for finding in findings}
 
 
 @patch("mininessus.checks.tls.inspect_tls_certificate")
