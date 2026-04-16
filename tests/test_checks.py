@@ -308,6 +308,41 @@ def test_http_security_check_does_not_flag_password_reset_from_loose_training_te
     assert "HTTP-063" not in {finding.id for finding in findings}
 
 
+@patch("mininessus.checks.http.fetch_http_observation")
+def test_http_security_check_does_not_treat_meta_names_or_partial_asset_paths_as_surface(mock_fetch):
+    def fake_fetch(
+        url: str,
+        timeout: int = 5,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+    ) -> HttpObservation:
+        if method in {"OPTIONS", "TRACE"}:
+            return HttpObservation(url=url, status=405, headers={}, redirected_to_https=False)
+        if url == "https://app.example":
+            return HttpObservation(
+                url=url,
+                status=200,
+                headers={"server": "nginx"},
+                body_preview='<meta name="viewport" content="width=device-width"><a href="/images/b">broken</a>',
+                redirected_to_https=False,
+            )
+        return HttpObservation(url=url, status=404, headers={}, body_preview="Not Found", redirected_to_https=False)
+
+    host = HostResult(
+        address="203.0.113.10",
+        hostname="app.example",
+        status="up",
+        ports=[PortService(port=443, protocol="tcp", state="open", service="https", tunnel="ssl")],
+    )
+
+    mock_fetch.side_effect = fake_fetch
+    findings = list(HttpSecurityCheck().run([host], "https://app.example"))
+
+    evidences = {finding.evidence for finding in findings if finding.category == "attack_surface"}
+    assert "form_field: viewport" not in evidences
+    assert "page: https://app.example/images/b" not in evidences
+
+
 @patch("mininessus.checks.tls.inspect_tls_certificate")
 def test_tls_check_detects_expired_and_self_signed(mock_inspect):
     mock_inspect.return_value = TLSDetails(

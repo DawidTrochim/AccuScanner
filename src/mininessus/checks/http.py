@@ -875,7 +875,7 @@ class HttpSecurityCheck(BaseCheck):
 
     def _build_input_surface_findings(self, target: str, observation: HttpObservation) -> list[Finding]:
         parameter_names = {name.lower() for name, _ in parse_qsl(urlparse(observation.url).query, keep_blank_values=True)}
-        parameter_names.update(match.lower() for match in FORM_FIELD_PATTERN.findall(observation.body_preview or ""))
+        parameter_names.update(self._extract_form_field_names(observation.body_preview))
         suspicious_names = sorted(name for name in parameter_names if name in INJECTION_PARAMETER_NAMES)
         findings: list[Finding] = []
         if suspicious_names:
@@ -1174,6 +1174,8 @@ class HttpSecurityCheck(BaseCheck):
             joined_url = self._normalize_surface_url(urljoin(base_url, raw_url))
             if not joined_url:
                 continue
+            if self._looks_like_partial_asset_path(joined_url):
+                continue
             kind = "page"
             if attribute.lower() == "src" and raw_url.lower().endswith(".js"):
                 kind = "script_asset"
@@ -1194,7 +1196,10 @@ class HttpSecurityCheck(BaseCheck):
 
     @staticmethod
     def _extract_form_field_names(body_preview: str) -> list[str]:
-        return sorted({field_name.lower() for field_name in FORM_FIELD_PATTERN.findall(body_preview or "")})
+        field_names: set[str] = set()
+        for form_detail in HttpSecurityCheck._extract_form_details_from_markup("", body_preview):
+            field_names.update(field_name.lower() for field_name in form_detail.fields)
+        return sorted(field_names)
 
     def _extract_script_endpoints(self, base_url: str, body_preview: str, base_netloc: str) -> list[str]:
         endpoints: list[str] = []
@@ -1218,6 +1223,10 @@ class HttpSecurityCheck(BaseCheck):
         return endpoints
 
     def _extract_form_details(self, base_url: str, body_preview: str) -> list["FormDetail"]:
+        return self._extract_form_details_from_markup(base_url, body_preview)
+
+    @staticmethod
+    def _extract_form_details_from_markup(base_url: str, body_preview: str) -> list["FormDetail"]:
         details: list[FormDetail] = []
         for match in FORM_BLOCK_PATTERN.finditer(body_preview or ""):
             attrs = match.group("attrs") or ""
@@ -1225,7 +1234,7 @@ class HttpSecurityCheck(BaseCheck):
             action_match = FORM_ACTION_PATTERN.search(attrs)
             method_match = FORM_METHOD_PATTERN.search(attrs)
             raw_action = action_match.group(1) if action_match else ""
-            normalized_action = self._normalize_surface_url(urljoin(base_url, raw_action or urlparse(base_url).path or "/"))
+            normalized_action = HttpSecurityCheck._normalize_surface_url(urljoin(base_url, raw_action or urlparse(base_url).path or "/")) if base_url else raw_action or "/"
             if not normalized_action:
                 continue
             fields = sorted({field_name.lower() for field_name in FORM_FIELD_PATTERN.findall(body)})
@@ -1283,6 +1292,15 @@ class HttpSecurityCheck(BaseCheck):
         return any(token in lowered for token in ("/api", "/graphql", "/rest", "/services", "/json", "/xml", "/soap", "/ajax", "/endpoint"))
 
     @staticmethod
+    def _looks_like_partial_asset_path(url: str) -> bool:
+        path = urlparse(url).path.lower()
+        asset_roots = ("/images/", "/img/", "/icons/", "/assets/", "/static/", "/media/")
+        if not path.startswith(asset_roots):
+            return False
+        leaf = path.rsplit("/", 1)[-1]
+        return "." not in leaf and len(leaf) <= 2
+
+    @staticmethod
     def _looks_like_password_reset_form(form_detail: "FormDetail") -> bool:
         action_text = form_detail.action.lower()
         field_set = set(form_detail.fields)
@@ -1307,6 +1325,13 @@ class HttpSecurityCheck(BaseCheck):
             return ""
         normalized = parsed._replace(fragment="")
         path = normalized.path or "/"
+        if path.endswith("/") or "." not in path.rsplit("/", 1)[-1]:
+            return urlunparse(normalized._replace(path=path))
+        extension = "." + path.rsplit(".", 1)[-1].lower()
+        if extension in DOCUMENT_EXTENSIONS or extension in STATIC_ASSET_EXTENSIONS or extension == ".js":
+            return urlunparse(normalized._replace(path=path))
+        if len(path.rsplit("/", 1)[-1]) <= 2:
+            return ""
         return urlunparse(normalized._replace(path=path))
 
     @staticmethod
