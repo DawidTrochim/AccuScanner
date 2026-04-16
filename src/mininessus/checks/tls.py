@@ -6,9 +6,11 @@ import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from ipaddress import ip_address
 
 from .base import BaseCheck
 from ..models import Finding, HostResult
+from ..utils import sanitize_target
 
 
 TLS_PORTS = {443, 8443}
@@ -101,7 +103,7 @@ class TlsCertificateCheck(BaseCheck):
                 continue
 
             port = 443 if 443 in tls_ports else tls_ports[0]
-            server_name = host.hostname or host.address
+            server_name = self._server_name(target, host)
             try:
                 details = inspect_tls_certificate(server_name, port=port)
             except OSError as exc:
@@ -111,7 +113,7 @@ class TlsCertificateCheck(BaseCheck):
                         title="TLS inspection failed",
                         severity="info",
                         category="tls",
-                        target=host.address,
+                        target=server_name,
                         description="The TLS service was detected but certificate inspection did not complete.",
                         evidence=str(exc),
                         recommendation="Validate TLS reachability manually and confirm certificate health.",
@@ -119,8 +121,23 @@ class TlsCertificateCheck(BaseCheck):
                 )
                 continue
 
-            findings.extend(self._build_certificate_findings(host.address, server_name, details))
+            findings.extend(self._build_certificate_findings(server_name, server_name, details))
         return findings
+
+    @staticmethod
+    def _server_name(target: str, host: HostResult) -> str:
+        requested_target = sanitize_target(target)
+        if requested_target and TlsCertificateCheck._looks_like_hostname(requested_target):
+            return requested_target
+        return host.address
+
+    @staticmethod
+    def _looks_like_hostname(value: str) -> bool:
+        try:
+            ip_address(value)
+        except ValueError:
+            return True
+        return False
 
     def _build_certificate_findings(self, target: str, hostname: str, details: TLSDetails) -> list[Finding]:
         findings: list[Finding] = []

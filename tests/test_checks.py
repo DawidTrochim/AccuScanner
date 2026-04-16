@@ -112,6 +112,32 @@ def test_http_security_check_flags_missing_headers_and_surfaces(mock_fetch):
     assert "HTTP-050" in ids
 
 
+@patch("mininessus.checks.http.fetch_http_observation")
+def test_http_security_check_prefers_requested_hostname_for_web_checks(mock_fetch):
+    def fake_fetch(
+        url: str,
+        timeout: int = 5,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+    ) -> HttpObservation:
+        return HttpObservation(
+            url=url,
+            status=200,
+            headers={"server": "cloudflare"},
+            body_preview="Welcome to nginx",
+            redirected_to_https=False,
+        )
+
+    mock_fetch.side_effect = fake_fetch
+    findings = list(HttpSecurityCheck().run([sample_host()], "https://msp365.sa1cloud.com"))
+
+    assert findings
+    assert all(finding.target == "msp365.sa1cloud.com" for finding in findings)
+    observed_urls = [call.args[0] for call in mock_fetch.call_args_list]
+    assert any(url.startswith("http://msp365.sa1cloud.com") for url in observed_urls)
+    assert not any(url.startswith("http://10.0.0.5") for url in observed_urls)
+
+
 @patch("mininessus.checks.tls.inspect_tls_certificate")
 def test_tls_check_detects_expired_and_self_signed(mock_inspect):
     mock_inspect.return_value = TLSDetails(
@@ -127,6 +153,24 @@ def test_tls_check_detects_expired_and_self_signed(mock_inspect):
     findings = list(TlsCertificateCheck().run([sample_host()], "10.0.0.5"))
     ids = {finding.id for finding in findings}
     assert {"TLS-001", "TLS-002", "TLS-003", "TLS-008"} <= ids
+
+
+@patch("mininessus.checks.tls.inspect_tls_certificate")
+def test_tls_check_prefers_requested_hostname(mock_inspect):
+    mock_inspect.return_value = TLSDetails(
+        not_after="Jan 01 00:00:00 2030 GMT",
+        subject_cn="msp365.sa1cloud.com",
+        issuer_cn="Example CA",
+        self_signed=False,
+        tls_version="TLSv1.3",
+        cipher="TLS_AES_256_GCM_SHA384",
+        san_dns_names=["msp365.sa1cloud.com"],
+        validation_error=None,
+    )
+
+    list(TlsCertificateCheck().run([sample_host()], "https://msp365.sa1cloud.com"))
+
+    mock_inspect.assert_called_once_with("msp365.sa1cloud.com", port=443)
 
 
 def test_banner_exposure_check_reports_service_metadata():

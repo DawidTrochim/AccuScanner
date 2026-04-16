@@ -5,7 +5,18 @@ import shlex
 
 
 def run_interactive_menu() -> list[str] | None:
+    print("=" * 72)
     print("AccuScanner Interactive Launcher")
+    print("=" * 72)
+    print("AccuScanner is a defensive assessment power tool.")
+    print("Use it only against systems, applications, cloud assets, and networks")
+    print("that you own or are explicitly authorized to test.")
+    print()
+    print("Notes:")
+    print("- Cloud posture scans require valid cloud credentials.")
+    print("- Authenticated Linux and Windows scans require SSH or WinRM access.")
+    print("- Direct CLI usage still works if you prefer manual command control.")
+    print("=" * 72)
     print("1. Simple mode")
     print("2. Advanced mode")
     print("3. Custom mode")

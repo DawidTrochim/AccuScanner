@@ -4,12 +4,14 @@ import re
 import ssl
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from ipaddress import ip_address
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import HTTPHandler, HTTPSHandler, Request, build_opener
 
 from .base import BaseCheck
 from ..models import Finding, HostResult
+from ..utils import sanitize_target
 
 
 USER_AGENT = "AccuScanner/1.0"
@@ -137,15 +139,16 @@ class HttpSecurityCheck(BaseCheck):
     def run(self, hosts: list[HostResult], target: str) -> Iterable[Finding]:
         findings: list[Finding] = []
         for host in hosts:
+            request_host = self._request_host(target, host)
             for port in (port for port in host.ports if port.state == "open"):
                 if port.port in HTTP_PORTS:
-                    findings.extend(self._check_endpoint(host, port.port, "http"))
+                    findings.extend(self._check_endpoint(host, request_host, port.port, "http"))
                 if port.port in HTTPS_PORTS:
-                    findings.extend(self._check_endpoint(host, port.port, "https"))
+                    findings.extend(self._check_endpoint(host, request_host, port.port, "https"))
         return findings
 
-    def _check_endpoint(self, host: HostResult, port: int, scheme: str) -> list[Finding]:
-        base_url = self._build_url(scheme, host.address, port)
+    def _check_endpoint(self, host: HostResult, request_host: str, port: int, scheme: str) -> list[Finding]:
+        base_url = self._build_url(scheme, request_host, port)
         observation = fetch_http_observation(base_url)
         if observation.status is None:
             if scheme == "https":
@@ -155,7 +158,7 @@ class HttpSecurityCheck(BaseCheck):
                         title="HTTPS service unavailable",
                         severity="medium",
                         category="web_security",
-                        target=host.address,
+                        target=request_host,
                         description="The endpoint appears to expose HTTPS but did not return a usable HTTPS response.",
                         evidence=observation.error or f"URL: {base_url}",
                         recommendation="Verify TLS listener health and ensure the HTTPS service is correctly configured.",
@@ -165,20 +168,20 @@ class HttpSecurityCheck(BaseCheck):
                 ]
             return []
 
-        findings = self._build_missing_header_findings(host.address, observation.headers, scheme.upper())
-        findings.extend(self._build_cors_findings(host.address, observation.headers))
-        findings.extend(self._build_cors_reflection_findings(host.address, base_url))
-        findings.extend(self._build_cookie_findings(host.address, observation.cookies))
-        findings.extend(self._build_content_findings(host.address, observation, scheme.upper()))
-        findings.extend(self._build_secret_exposure_findings(host.address, observation))
-        findings.extend(self._build_http_method_findings(host.address, base_url))
-        findings.extend(self._build_trace_finding(host.address, base_url))
-        findings.extend(self._build_server_header_finding(host.address, observation.headers))
-        findings.extend(self._build_auth_surface_findings(host.address, observation))
-        findings.extend(self._build_sensitive_path_findings(host.address, base_url))
-        findings.extend(self._build_common_path_findings(host.address, base_url))
-        findings.extend(self._build_api_surface_findings(host.address, base_url))
-        findings.extend(self._build_fingerprint_findings(host.address, observation))
+        findings = self._build_missing_header_findings(request_host, observation.headers, scheme.upper())
+        findings.extend(self._build_cors_findings(request_host, observation.headers))
+        findings.extend(self._build_cors_reflection_findings(request_host, base_url))
+        findings.extend(self._build_cookie_findings(request_host, observation.cookies))
+        findings.extend(self._build_content_findings(request_host, observation, scheme.upper()))
+        findings.extend(self._build_secret_exposure_findings(request_host, observation))
+        findings.extend(self._build_http_method_findings(request_host, base_url))
+        findings.extend(self._build_trace_finding(request_host, base_url))
+        findings.extend(self._build_server_header_finding(request_host, observation.headers))
+        findings.extend(self._build_auth_surface_findings(request_host, observation))
+        findings.extend(self._build_sensitive_path_findings(request_host, base_url))
+        findings.extend(self._build_common_path_findings(request_host, base_url))
+        findings.extend(self._build_api_surface_findings(request_host, base_url))
+        findings.extend(self._build_fingerprint_findings(request_host, observation))
 
         if scheme == "http" and not observation.redirected_to_https:
             findings.append(
@@ -187,7 +190,7 @@ class HttpSecurityCheck(BaseCheck):
                     title="HTTP service does not enforce HTTPS",
                     severity="high",
                     category="web_security",
-                    target=host.address,
+                    target=request_host,
                     description="The server responded over HTTP without redirecting clients to HTTPS.",
                     evidence=f"Observed URL {observation.url} with status {observation.status}.",
                     recommendation="Redirect all plaintext requests to HTTPS and enable HSTS.",
@@ -196,6 +199,23 @@ class HttpSecurityCheck(BaseCheck):
                 )
             )
         return findings
+
+    @staticmethod
+    def _request_host(target: str, host: HostResult) -> str:
+        requested_target = sanitize_target(target)
+        if requested_target and HttpSecurityCheck._looks_like_hostname(requested_target):
+            return requested_target
+        return host.address
+
+    @staticmethod
+    def _looks_like_hostname(value: str) -> bool:
+        if "/" in value:
+            return False
+        try:
+            ip_address(value)
+        except ValueError:
+            return True
+        return False
 
     def _build_missing_header_findings(self, target: str, headers: dict[str, str], protocol_label: str) -> list[Finding]:
         findings: list[Finding] = []
