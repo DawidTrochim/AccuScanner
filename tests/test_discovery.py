@@ -33,3 +33,13 @@ def test_normalize_nmap_command_removes_fast_scan_when_ports_are_explicit():
     assert "-F" not in normalized
     assert "-p" in normalized
     assert "T:22,80,U:53" in normalized
+
+
+def test_normalize_nmap_command_keeps_only_last_port_override():
+    command = ["nmap", "-oX", "-", "-Pn", "-T4", "-p-", "-sV", "-sC", "target", "-p", "21,23,3389"]
+
+    normalized = _normalize_nmap_command(command)
+
+    assert normalized.count("-p") == 1
+    assert "-p-" not in normalized
+    assert "21,23,3389" in normalized

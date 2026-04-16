@@ -112,4 +112,27 @@ def _normalize_nmap_command(command: list[str]) -> list[str]:
 
     if "-F" in command and "-p" in command:
         command = [part for part in command if part != "-F"]
+    command = _remove_duplicate_port_selection(command)
     return command
+
+
+def _remove_duplicate_port_selection(command: list[str]) -> list[str]:
+    """Drop mode-level port presets when an explicit ``-p`` override is supplied."""
+
+    explicit_port_indexes = [index for index, part in enumerate(command) if part == "-p"]
+    if len(explicit_port_indexes) <= 1 and "-p-" not in command:
+        return command
+
+    normalized: list[str] = []
+    keep_index = explicit_port_indexes[-1]
+    index = 0
+    while index < len(command):
+        if command[index] == "-p-":
+            index += 1
+            continue
+        if command[index] == "-p" and index != keep_index:
+            index += 2
+            continue
+        normalized.append(command[index])
+        index += 1
+    return normalized
