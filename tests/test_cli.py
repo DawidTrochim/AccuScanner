@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 from pathlib import Path
 
-from mininessus.cli import _load_batch_targets, execute_scan
+from mininessus.cli import _load_batch_targets, execute_scan, main
 from mininessus.discovery import NmapExecution
 from mininessus.models import HostResult
 
@@ -72,3 +72,20 @@ def test_load_batch_targets_combines_cli_and_file_targets():
         assert targets == ["10.0.0.5", "10.0.0.6", "10.0.0.7"]
     finally:
         targets_path.unlink(missing_ok=True)
+
+
+@patch("mininessus.cli.run_schedule", return_value=0)
+@patch("mininessus.cli.run_interactive_menu", return_value=["schedule", "10.0.0.5"])
+@patch("mininessus.cli.sys.stdout.isatty", return_value=True)
+@patch("mininessus.cli.sys.stdin.isatty", return_value=True)
+def test_main_launches_interactive_menu_when_no_arguments(
+    _mock_stdin_tty,
+    _mock_stdout_tty,
+    mock_interactive_menu,
+    mock_run_schedule,
+):
+    exit_code = main([])
+
+    assert exit_code == 0
+    mock_interactive_menu.assert_called_once()
+    mock_run_schedule.assert_called_once()

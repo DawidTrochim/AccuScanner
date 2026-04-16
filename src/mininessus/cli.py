@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from .config import ScanConfig, load_scan_config, merge_scan_config
 from .discovery import DiscoveryError, build_extra_nmap_args, run_nmap
 from .gcp_checks import run_gcp_checks
 from .history import load_history_reports, store_scan_history
+from .interactive import run_interactive_menu
 from .models import Finding, HostResult, ScanMetadata, ScanResult
 from .parsing import NmapParseError, parse_nmap_xml
 from .profiles import PROFILE_PRESETS, apply_profile
@@ -50,7 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "AccuScanner is a defensive, Nessus-inspired assessment tool for\n"
             "owned and authorized systems. It uses nmap for discovery and\n"
-            "exports structured JSON and HTML reports."
+            "exports structured JSON and HTML reports.\n\n"
+            "Run `accuscanner` with no arguments to launch the guided menu."
         ),
         epilog=(
             "Examples:\n"
@@ -555,7 +558,17 @@ def print_summary(
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
+    if not argv:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            interactive_args = run_interactive_menu()
+            if interactive_args is None:
+                return 0
+            argv = interactive_args
+        else:
+            parser.print_help()
+            return 2
     args = parser.parse_args(argv)
     if args.command == "scan":
         return run_scan(args)

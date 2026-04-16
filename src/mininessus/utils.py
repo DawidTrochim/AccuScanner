@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -43,7 +43,7 @@ def infer_scan_target(target: str) -> tuple[str, str | None]:
 def ensure_output_dir(base_dir: str | None, timestamped: bool) -> Path:
     root = Path(base_dir or "reports")
     if timestamped:
-        root = root / datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        root = root / datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -53,7 +53,7 @@ def safe_filename(value: str) -> str:
 
 
 def utc_timestamp() -> str:
-    return datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
 
 def build_report_stem(target: str, scan_mode: str, timestamp: str | None = None) -> str:
