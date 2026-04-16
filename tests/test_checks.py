@@ -168,6 +168,48 @@ def test_http_security_check_prefers_requested_hostname_for_web_checks(mock_fetc
     assert not any(url.startswith("http://10.0.0.5") for url in observed_urls)
 
 
+@patch("mininessus.checks.http.fetch_http_observation")
+def test_http_security_check_discovers_same_host_attack_surface(mock_fetch):
+    def fake_fetch(
+        url: str,
+        timeout: int = 5,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+    ) -> HttpObservation:
+        if method in {"OPTIONS", "TRACE"}:
+            return HttpObservation(url=url, status=405, headers={}, redirected_to_https=False)
+        if url == "https://app.example":
+            return HttpObservation(
+                url=url,
+                status=200,
+                headers={"server": "nginx"},
+                body_preview='<a href="/portal?id=7">Portal</a><script src="/static/app.js"></script><form action="/submit"><input name="search"></form>',
+                redirected_to_https=False,
+            )
+        if url == "https://app.example/portal?id=7":
+            return HttpObservation(url=url, status=200, headers={"server": "nginx"}, body_preview="Portal", redirected_to_https=False)
+        if url == "https://app.example/submit":
+            return HttpObservation(url=url, status=200, headers={"server": "nginx"}, body_preview="Submit", redirected_to_https=False)
+        if url == "https://app.example/static/app.js":
+            return HttpObservation(url=url, status=200, headers={"content-type": "application/javascript"}, body_preview="fetch('/api')", redirected_to_https=False)
+        return HttpObservation(url=url, status=404, headers={}, body_preview="Not Found", redirected_to_https=False)
+
+    host = HostResult(
+        address="203.0.113.10",
+        hostname="app.example",
+        status="up",
+        ports=[PortService(port=443, protocol="tcp", state="open", service="https", tunnel="ssl")],
+    )
+
+    mock_fetch.side_effect = fake_fetch
+    findings = list(HttpSecurityCheck().run([host], "https://app.example"))
+
+    surface_ids = {finding.id for finding in findings if finding.category == "attack_surface"}
+    assert "HTTP-068-route" in surface_ids
+    assert "HTTP-068-form_action" in surface_ids
+    assert "HTTP-068-script_asset" in surface_ids
+
+
 @patch("mininessus.checks.tls.inspect_tls_certificate")
 def test_tls_check_detects_expired_and_self_signed(mock_inspect):
     mock_inspect.return_value = TLSDetails(

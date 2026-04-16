@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from mininessus.models import Finding, ScanMetadata, ScanResult
-from mininessus.reporting import write_csv_report, write_markdown_report, write_sarif_report
+from mininessus.reporting import write_csv_report, write_html_report, write_markdown_report, write_sarif_report
 
 
 def _sample_result() -> ScanResult:
@@ -26,7 +26,19 @@ def _sample_result() -> ScanResult:
                 recommendation="Redirect to HTTPS.",
                 confidence="high",
                 tags=["web", "transport"],
-            )
+            ),
+            Finding(
+                id="HTTP-068-route",
+                title="Discovered route surface",
+                severity="info",
+                category="attack_surface",
+                target="host-a",
+                description="A same-host route was discovered.",
+                evidence="route: https://host-a/admin",
+                recommendation="Review the route.",
+                confidence="medium",
+                tags=["web", "surface"],
+            ),
         ],
     )
 
@@ -36,19 +48,23 @@ def test_reporting_writers_emit_markdown_csv_and_sarif():
     output_dir = Path("test-report-output")
     output_dir.mkdir(exist_ok=True)
     markdown_path = output_dir / "report.md"
+    html_path = output_dir / "report.html"
     csv_path = output_dir / "report.csv"
     sarif_path = output_dir / "report.sarif"
 
     try:
         write_markdown_report(result, markdown_path)
+        write_html_report(result, html_path)
         write_csv_report(result, csv_path)
         write_sarif_report(result, sarif_path)
 
         assert "AccuScanner Report" in markdown_path.read_text(encoding="utf-8")
+        assert "Discovered Attack Surface" in html_path.read_text(encoding="utf-8")
         assert "HTTP-005" in csv_path.read_text(encoding="utf-8")
         assert '"version": "2.1.0"' in sarif_path.read_text(encoding="utf-8")
     finally:
         markdown_path.unlink(missing_ok=True)
+        html_path.unlink(missing_ok=True)
         csv_path.unlink(missing_ok=True)
         sarif_path.unlink(missing_ok=True)
         output_dir.rmdir()

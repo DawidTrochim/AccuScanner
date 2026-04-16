@@ -368,6 +368,32 @@ HTML_TEMPLATE = Template(
       </section>
 
       <section class="panel">
+        <h2>Discovered Attack Surface</h2>
+        {% set surface_findings = report.findings | selectattr("category", "equalto", "attack_surface") | list %}
+        {% if surface_findings %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Target</th><th>Evidence</th><th>Confidence</th></tr>
+            </thead>
+            <tbody>
+              {% for finding in surface_findings %}
+              <tr>
+                <td>{{ finding.id }}</td>
+                <td>{{ finding.target }}</td>
+                <td>{{ finding.evidence }}</td>
+                <td>{{ finding.confidence }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty">No additional same-host routes, forms, or script assets were cataloged during this scan.</div>
+        {% endif %}
+      </section>
+
+      <section class="panel">
         <h2>Findings</h2>
         {% if report.findings %}
         <div class="findings-list">

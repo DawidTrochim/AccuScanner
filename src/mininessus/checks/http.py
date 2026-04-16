@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from ipaddress import ip_address
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qsl, urljoin, urlparse
+from urllib.parse import parse_qsl, urljoin, urlparse, urlunparse
 from urllib.request import HTTPHandler, HTTPSHandler, Request, build_opener
 
 from .base import BaseCheck
@@ -132,12 +132,14 @@ FILE_PARAMETER_NAMES = {"file", "path", "page", "template", "include", "document
 URL_PARAMETER_NAMES = {"url", "uri", "link", "dest", "redirect", "return", "next", "target"}
 FORM_FIELD_PATTERN = re.compile(r'name=["\']([A-Za-z0-9_.-]{1,64})["\']', re.IGNORECASE)
 FORM_TAG_PATTERN = re.compile(r"<form\b", re.IGNORECASE)
+LINK_ATTR_PATTERN = re.compile(r"""(href|src|action)=["']([^"'#]+)""", re.IGNORECASE)
 FILE_UPLOAD_PATTERN = re.compile(r'type=["\']file["\']', re.IGNORECASE)
 CSRF_TOKEN_PATTERN = re.compile(r'name=["\'](?:csrf|csrf_token|xsrf|authenticity_token|__requestverificationtoken)["\']', re.IGNORECASE)
 PASSWORD_RESET_PATTERN = re.compile(r"(forgot password|reset password|password reset)", re.IGNORECASE)
 WEB_STORAGE_PATTERN = re.compile(r"\b(?:localStorage|sessionStorage|indexedDB)\b", re.IGNORECASE)
 SOAP_MARKERS = ("soapenv:", "soap:", "wsdl", "?wsdl", "application/soap+xml")
 AJAX_MARKERS = ("xmlhttprequest", "jquery", "fetch(", "axios", "application/json")
+SURFACE_CRAWL_LIMIT = 8
 
 
 @dataclass(slots=True)
@@ -233,6 +235,7 @@ class HttpSecurityCheck(BaseCheck):
         findings.extend(self._build_common_path_findings(request_host, base_url))
         findings.extend(self._build_api_surface_findings(request_host, base_url))
         findings.extend(self._build_fingerprint_findings(request_host, observation))
+        findings.extend(self._build_attack_surface_findings(request_host, base_url, observation))
 
         if scheme == "http" and not observation.redirected_to_https:
             findings.append(
@@ -981,7 +984,98 @@ class HttpSecurityCheck(BaseCheck):
             )
         return findings
 
+    def _build_attack_surface_findings(self, target: str, base_url: str, base_observation: HttpObservation) -> list[Finding]:
+        findings: list[Finding] = []
+        discoveries = self._discover_same_host_surfaces(base_url, base_observation)
+        seen_urls: set[str] = set()
+        for discovery in discoveries:
+            if discovery.url in seen_urls:
+                continue
+            seen_urls.add(discovery.url)
+            findings.append(
+                self.finding(
+                    finding_id=f"HTTP-068-{discovery.kind}",
+                    title=f"Discovered {discovery.kind.replace('_', ' ')} surface",
+                    severity="info",
+                    category="attack_surface",
+                    target=target,
+                    description="The passive crawler discovered an additional same-host application surface during the web review.",
+                    evidence=f"{discovery.kind}: {discovery.url}",
+                    recommendation="Review the discovered route as part of application attack-surface inventory and confirm it is intended to be exposed.",
+                    confidence="medium",
+                    tags=["web", "surface", "manual-review"],
+                )
+            )
+            if discovery.observation and discovery.kind in {"route", "form_action"}:
+                findings.extend(self._build_passive_injection_findings(target, discovery.observation))
+                findings.extend(self._build_form_posture_findings(target, discovery.observation))
+                findings.extend(self._build_client_side_surface_findings(target, discovery.observation))
+                findings.extend(self._build_protocol_surface_findings(target, discovery.observation))
+                findings.extend(self._build_api_surface_findings(target, discovery.url))
+        return findings
+
+    def _discover_same_host_surfaces(self, base_url: str, base_observation: HttpObservation) -> list["SurfaceDiscovery"]:
+        discoveries: list[SurfaceDiscovery] = []
+        queue: list[str] = [base_observation.url or base_url]
+        visited: set[str] = set()
+        base_netloc = urlparse(base_url).netloc
+
+        while queue and len(visited) < SURFACE_CRAWL_LIMIT:
+            current_url = queue.pop(0)
+            normalized_current = self._normalize_surface_url(current_url)
+            if normalized_current in visited:
+                continue
+            visited.add(normalized_current)
+            observation = base_observation if normalized_current == self._normalize_surface_url(base_observation.url or base_url) else fetch_http_observation(current_url)
+            if observation.status is None or observation.status >= 500:
+                continue
+
+            for kind, discovered_url in self._extract_surface_urls(current_url, observation.body_preview):
+                normalized_url = self._normalize_surface_url(discovered_url)
+                if not normalized_url or urlparse(normalized_url).netloc != base_netloc:
+                    continue
+                if normalized_url not in {item.url for item in discoveries}:
+                    discoveries.append(SurfaceDiscovery(kind=kind, url=normalized_url))
+                if kind in {"route", "form_action"} and normalized_url not in visited and normalized_url not in queue and len(visited) + len(queue) < SURFACE_CRAWL_LIMIT:
+                    queue.append(normalized_url)
+                if kind in {"route", "form_action"}:
+                    for item in discoveries:
+                        if item.url == normalized_url and item.kind == kind and item.observation is None:
+                            item.observation = fetch_http_observation(normalized_url)
+                            break
+        return discoveries
+
+    def _extract_surface_urls(self, base_url: str, body_preview: str) -> list[tuple[str, str]]:
+        surfaces: list[tuple[str, str]] = []
+        for attribute, raw_url in LINK_ATTR_PATTERN.findall(body_preview or ""):
+            joined_url = self._normalize_surface_url(urljoin(base_url, raw_url))
+            if not joined_url:
+                continue
+            kind = "route"
+            if attribute.lower() == "src" and raw_url.lower().endswith(".js"):
+                kind = "script_asset"
+            elif attribute.lower() == "action":
+                kind = "form_action"
+            surfaces.append((kind, joined_url))
+        return surfaces
+
+    @staticmethod
+    def _normalize_surface_url(url: str) -> str:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return ""
+        normalized = parsed._replace(fragment="")
+        path = normalized.path or "/"
+        return urlunparse(normalized._replace(path=path))
+
     @staticmethod
     def _build_url(scheme: str, host: str, port: int) -> str:
         default_port = 80 if scheme == "http" else 443
         return f"{scheme}://{host}" if port == default_port else f"{scheme}://{host}:{port}"
+
+
+@dataclass(slots=True)
+class SurfaceDiscovery:
+    kind: str
+    url: str
+    observation: HttpObservation | None = None
