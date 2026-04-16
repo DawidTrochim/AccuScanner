@@ -210,19 +210,12 @@ def fetch_http_observation(
     method: str = "GET",
     headers: dict[str, str] | None = None,
 ) -> HttpObservation:
-    context = ssl.create_default_context()
-    opener = build_opener(HTTPHandler(), HTTPSHandler(context=context))
     request_headers = {"User-Agent": USER_AGENT}
     if headers:
         request_headers.update(headers)
     request = Request(url, headers=request_headers, method=method)
     try:
-        response = opener.open(request, timeout=timeout)
-        body = response.read(4096).decode("utf-8", errors="replace") if method != "HEAD" else ""
-        headers = {key.lower(): value for key, value in response.headers.items()}
-        cookies = response.headers.get_all("Set-Cookie", [])
-        redirected = response.geturl().startswith("https://") and url.startswith("http://")
-        return HttpObservation(response.geturl(), response.status, headers, body, cookies, redirected)
+        return _open_http_request(request, url, timeout=timeout, verify_tls=True)
     except HTTPError as exc:
         body = exc.read(4096).decode("utf-8", errors="replace")
         headers = {key.lower(): value for key, value in exc.headers.items()}
@@ -230,7 +223,33 @@ def fetch_http_observation(
         redirected = exc.geturl().startswith("https://") and url.startswith("http://")
         return HttpObservation(exc.geturl(), exc.code, headers, body, cookies, redirected, error=str(exc))
     except URLError as exc:
+        if url.startswith("https://") and _is_tls_validation_error(exc):
+            try:
+                return _open_http_request(request, url, timeout=timeout, verify_tls=False)
+            except HTTPError as retry_exc:
+                body = retry_exc.read(4096).decode("utf-8", errors="replace")
+                headers = {key.lower(): value for key, value in retry_exc.headers.items()}
+                cookies = retry_exc.headers.get_all("Set-Cookie", [])
+                return HttpObservation(retry_exc.geturl(), retry_exc.code, headers, body, cookies, False, error=str(retry_exc))
+            except URLError as retry_exc:
+                return HttpObservation(url, None, {}, error=str(retry_exc))
         return HttpObservation(url, None, {}, error=str(exc))
+
+
+def _open_http_request(request: Request, original_url: str, *, timeout: int, verify_tls: bool) -> HttpObservation:
+    context = ssl.create_default_context() if verify_tls else ssl._create_unverified_context()
+    opener = build_opener(HTTPHandler(), HTTPSHandler(context=context))
+    response = opener.open(request, timeout=timeout)
+    body = response.read(4096).decode("utf-8", errors="replace") if request.get_method() != "HEAD" else ""
+    headers = {key.lower(): value for key, value in response.headers.items()}
+    cookies = response.headers.get_all("Set-Cookie", [])
+    redirected = response.geturl().startswith("https://") and original_url.startswith("http://")
+    return HttpObservation(response.geturl(), response.status, headers, body, cookies, redirected)
+
+
+def _is_tls_validation_error(exc: URLError) -> bool:
+    reason = getattr(exc, "reason", None)
+    return isinstance(reason, (ssl.SSLCertVerificationError, ssl.SSLError))
 
 
 class HttpSecurityCheck(BaseCheck):
@@ -1098,6 +1117,11 @@ class HttpSecurityCheck(BaseCheck):
             observation = base_observation if normalized_current == self._normalize_surface_url(base_observation.url or base_url) else fetch_http_observation(current_url)
             if observation.status is None or observation.status >= 500:
                 continue
+            for item in discoveries:
+                if item.url == normalized_current and item.observation is None:
+                    item.observation = observation
+                    item.kind = self._refine_surface_kind(item.kind, normalized_current, observation)
+                    break
 
             for kind, discovered_url in self._extract_surface_urls(current_url, observation.body_preview):
                 normalized_url = self._normalize_surface_url(discovered_url)
@@ -1111,6 +1135,7 @@ class HttpSecurityCheck(BaseCheck):
                     for item in discoveries:
                         if item.url == normalized_url and item.kind == kind and item.observation is None:
                             item.observation = fetch_http_observation(normalized_url)
+                            item.kind = self._refine_surface_kind(item.kind, normalized_url, item.observation)
                             if kind == "script_asset" and item.observation.status and item.observation.status < 500:
                                 for endpoint in self._extract_script_endpoints(normalized_url, item.observation.body_preview, base_netloc):
                                     discoveries.append(SurfaceDiscovery(kind="script_endpoint", url=endpoint))
@@ -1213,6 +1238,25 @@ class HttpSecurityCheck(BaseCheck):
                 )
             )
         return details
+
+    def _refine_surface_kind(self, kind: str, url: str, observation: HttpObservation) -> str:
+        if kind in {"document", "script_endpoint", "query_parameter", "form_field"}:
+            return kind
+        if self._looks_like_document(url):
+            return "document"
+        if self._looks_like_script_asset(url):
+            return "script_asset"
+        if self._looks_like_static_asset(url):
+            return "static_asset"
+
+        content_type = (observation.headers.get("content-type") or "").lower()
+        if any(marker in content_type for marker in ("image/", "font/", "text/css", "javascript", "ecmascript")):
+            if "javascript" in content_type or "ecmascript" in content_type:
+                return "script_asset"
+            return "static_asset"
+        if any(marker in content_type for marker in ("application/pdf", "text/plain", "application/zip", "application/msword", "spreadsheet")):
+            return "document"
+        return kind
 
     @staticmethod
     def _path_extension(url: str) -> str:

@@ -1,7 +1,9 @@
+import ssl
+from urllib.error import URLError
 from unittest.mock import patch
 
 from mininessus.checks.banner import BannerExposureCheck
-from mininessus.checks.http import HttpObservation, HttpSecurityCheck
+from mininessus.checks.http import HttpObservation, HttpSecurityCheck, fetch_http_observation
 from mininessus.checks.ports import RiskyPortCheck
 from mininessus.checks.services import ServiceExposureCheck
 from mininessus.checks.tls import TLSDetails, TlsCertificateCheck
@@ -24,6 +26,29 @@ def sample_host() -> HostResult:
 def test_risky_port_check_finds_ftp():
     findings = list(RiskyPortCheck().run([sample_host()], "10.0.0.5"))
     assert any(f.id == "PORT-21" for f in findings)
+
+
+@patch("mininessus.checks.http._open_http_request")
+def test_fetch_http_observation_retries_https_without_tls_validation(mock_open_request):
+    ssl_error = URLError(ssl.SSLCertVerificationError("certificate verify failed"))
+
+    def side_effect(request, original_url: str, *, timeout: int, verify_tls: bool):
+        if verify_tls:
+            raise ssl_error
+        return HttpObservation(
+            url=original_url,
+            status=200,
+            headers={"server": "apache"},
+            body_preview="ok",
+            redirected_to_https=False,
+        )
+
+    mock_open_request.side_effect = side_effect
+
+    observation = fetch_http_observation("https://example.test")
+
+    assert observation.status == 200
+    assert mock_open_request.call_count == 2
 
 
 @patch("mininessus.checks.http.fetch_http_observation")
@@ -226,11 +251,13 @@ def test_http_security_check_uses_robots_and_sitemap_as_discovery_seeds(mock_fet
         if url == "https://app.example":
             return HttpObservation(url=url, status=200, headers={"server": "nginx"}, body_preview="Home", redirected_to_https=False)
         if url == "https://app.example/robots.txt":
-            return HttpObservation(url=url, status=200, headers={"content-type": "text/plain"}, body_preview="Allow: /hidden\nDisallow: /private/report.pdf", redirected_to_https=False)
+            return HttpObservation(url=url, status=200, headers={"content-type": "text/plain"}, body_preview="Allow: /hidden\nDisallow: /private/report.pdf\nAllow: /images/logo.png", redirected_to_https=False)
         if url == "https://app.example/sitemap.xml":
             return HttpObservation(url=url, status=200, headers={"content-type": "application/xml"}, body_preview="<urlset><url><loc>https://app.example/catalog</loc></url></urlset>", redirected_to_https=False)
         if url in {"https://app.example/hidden", "https://app.example/catalog"}:
             return HttpObservation(url=url, status=200, headers={"server": "nginx"}, body_preview="Page", redirected_to_https=False)
+        if url == "https://app.example/images/logo.png":
+            return HttpObservation(url=url, status=200, headers={"content-type": "image/png"}, body_preview="", redirected_to_https=False)
         return HttpObservation(url=url, status=404, headers={}, body_preview="Not Found", redirected_to_https=False)
 
     host = HostResult(
@@ -247,6 +274,7 @@ def test_http_security_check_uses_robots_and_sitemap_as_discovery_seeds(mock_fet
     assert "page: https://app.example/hidden" in evidences
     assert "page: https://app.example/catalog" in evidences
     assert "document: https://app.example/private/report.pdf" in evidences
+    assert "static_asset: https://app.example/images/logo.png" in evidences
 
 
 @patch("mininessus.checks.http.fetch_http_observation")
