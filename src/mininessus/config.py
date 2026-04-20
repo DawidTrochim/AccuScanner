@@ -32,6 +32,8 @@ class ScanConfig:
     browser_assisted: bool = False
     browser_max_pages: int | None = None
     browser_timeout_ms: int | None = None
+    web_cookie: str | None = None
+    web_headers: list[str] = field(default_factory=list)
 
 
 def load_scan_config(path: str | None) -> ScanConfig:
@@ -63,6 +65,8 @@ def load_scan_config(path: str | None) -> ScanConfig:
         browser_assisted=bool(content.get("browser_assisted", False)),
         browser_max_pages=content.get("browser_max_pages"),
         browser_timeout_ms=content.get("browser_timeout_ms"),
+        web_cookie=content.get("web_cookie"),
+        web_headers=[str(value) for value in content.get("web_headers", [])],
     )
 
 

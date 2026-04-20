@@ -28,6 +28,30 @@ def _sample_result() -> ScanResult:
                 tags=["web", "transport"],
             ),
             Finding(
+                id="HTTP-001",
+                title="Missing HSTS header",
+                severity="medium",
+                category="web_headers",
+                target="host-a",
+                description="The security header `strict-transport-security` was not observed on the HTTP response.",
+                evidence="Headers observed: ['server'].",
+                recommendation="Set the recommended HTTP response header at the application or reverse proxy layer.",
+                confidence="high",
+                tags=["web", "headers"],
+            ),
+            Finding(
+                id="HTTP-001",
+                title="Missing HSTS header",
+                severity="medium",
+                category="web_headers",
+                target="host-a",
+                description="The security header `strict-transport-security` was not observed on the HTTPS response.",
+                evidence="Headers observed: ['server', 'x-frame-options'].",
+                recommendation="Set the recommended HTTP response header at the application or reverse proxy layer.",
+                confidence="high",
+                tags=["web", "headers"],
+            ),
+            Finding(
                 id="HTTP-068-page",
                 title="Discovered page surface",
                 severity="info",
@@ -77,6 +101,8 @@ def test_reporting_writers_emit_markdown_csv_and_sarif():
         assert "Query Parameters" in html_text
         assert "https://host-a/admin" in html_text
         assert "query_parameter: id" not in html_text
+        assert html_text.count("Missing HSTS header") == 3
+        assert "Protocols:</strong> HTTP, HTTPS" in html_text
         assert "HTTP-005" in csv_path.read_text(encoding="utf-8")
         assert "HTTP-068-page" not in csv_path.read_text(encoding="utf-8")
         assert '"version": "2.1.0"' in sarif_path.read_text(encoding="utf-8")

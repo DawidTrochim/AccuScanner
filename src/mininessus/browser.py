@@ -58,6 +58,7 @@ def discover_browser_surface(
     max_pages: int = 5,
     timeout_ms: int = 8000,
     max_clicks: int = 6,
+    extra_headers: dict[str, str] | None = None,
 ) -> list[BrowserSurface]:
     try:
         from playwright.sync_api import Error as PlaywrightError
@@ -88,6 +89,14 @@ def discover_browser_surface(
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         context = browser.new_context(ignore_https_errors=True)
+        header_map = dict(extra_headers or {})
+        cookie_header = header_map.pop("Cookie", header_map.pop("cookie", ""))
+        if header_map:
+            context.set_extra_http_headers(header_map)
+        if cookie_header:
+            cookies = _cookies_from_header(cookie_header, base_url)
+            if cookies:
+                context.add_cookies(cookies)
         context.add_init_script(_TRACK_REQUESTS_SCRIPT)
         page = context.new_page()
         page.set_default_navigation_timeout(timeout_ms)
@@ -238,3 +247,26 @@ def _normalize_same_host_url(raw_value: str, base_url: str, base_netloc: str) ->
     if parsed.scheme not in {"http", "https"} or parsed.netloc != base_netloc:
         return ""
     return parsed._replace(fragment="").geturl()
+
+
+def _cookies_from_header(cookie_header: str, base_url: str) -> list[dict[str, str]]:
+    parsed = urlparse(base_url)
+    cookies: list[dict[str, str]] = []
+    for part in cookie_header.split(";"):
+        if "=" not in part:
+            continue
+        name, value = part.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+        if not name:
+            continue
+        cookies.append(
+            {
+                "name": name,
+                "value": value,
+                "domain": parsed.hostname or "",
+                "path": "/",
+                "secure": parsed.scheme == "https",
+            }
+        )
+    return cookies

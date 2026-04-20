@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from csv import DictWriter
 from pathlib import Path
 
@@ -298,13 +299,16 @@ HTML_TEMPLATE = Template(
 
       <section class="panel">
         <h2>Top Risks</h2>
-        {% if report.summary.top_risks %}
+        {% if report.display_top_risks %}
         <div class="priority-grid">
-          {% for finding in report.summary.top_risks %}
+          {% for finding in report.display_top_risks %}
           <article class="priority-card">
             <span class="severity-pill {{ finding.severity }}">{{ finding.severity }}</span>
             <h3>{{ finding.title }}</h3>
             <div class="muted">{{ finding.target }}</div>
+            {% if finding.protocols %}
+            <div class="muted">Protocols: {{ finding.protocols | join(", ") }}</div>
+            {% endif %}
             <div class="finding-section-title">Recommendation</div>
             <div>{{ finding.recommendation }}</div>
           </article>
@@ -345,8 +349,8 @@ HTML_TEMPLATE = Template(
 
       <section class="panel">
         <h2>Remediation By Asset</h2>
-        {% if report.findings_by_target %}
-          {% for target, findings in report.findings_by_target.items() %}
+        {% if report.display_findings_by_target %}
+          {% for target, findings in report.display_findings_by_target.items() %}
           <section class="asset-group">
             <h3 class="asset-title">{{ target }}</h3>
             {% for finding in findings %}
@@ -431,9 +435,9 @@ HTML_TEMPLATE = Template(
 
       <section class="panel">
         <h2>Findings</h2>
-        {% if report.findings %}
+        {% if report.display_findings %}
         <div class="findings-list">
-          {% for finding in report.findings %}
+          {% for finding in report.display_findings %}
           <article class="finding-card {{ finding.severity }}">
             <div class="finding-top">
               <h3 class="finding-title">{{ finding.title }}</h3>
@@ -444,6 +448,9 @@ HTML_TEMPLATE = Template(
               <span><strong>Category:</strong> {{ finding.category }}</span>
               <span><strong>Target:</strong> {{ finding.target }}</span>
               <span><strong>Confidence:</strong> {{ finding.confidence }}</span>
+              {% if finding.protocols %}
+              <span><strong>Protocols:</strong> {{ finding.protocols | join(", ") }}</span>
+              {% endif %}
             </div>
             {% if finding.tags %}
             <div>
@@ -478,7 +485,14 @@ def write_json_report(result: ScanResult, path: Path) -> Path:
 
 
 def write_html_report(result: ScanResult, path: Path) -> Path:
-    path.write_text(HTML_TEMPLATE.render(report=result.to_dict()), encoding="utf-8")
+    report = result.to_dict()
+    report["display_findings"] = _group_findings_for_display(report["findings"])
+    report["display_top_risks"] = _group_findings_for_display(report["summary"]["top_risks"])
+    report["display_findings_by_target"] = {
+        target: _group_findings_for_display(findings)
+        for target, findings in report["findings_by_target"].items()
+    }
+    path.write_text(HTML_TEMPLATE.render(report=report), encoding="utf-8")
     return path
 
 
@@ -599,6 +613,36 @@ def write_sarif_report(result: ScanResult, path: Path) -> Path:
 
 def load_report(path: str | Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _group_findings_for_display(findings: list[dict]) -> list[dict]:
+    grouped: dict[tuple[str, str, str, str], dict] = {}
+    for finding in findings:
+        if finding.get("category") != "web_headers":
+            grouped[("raw", finding["id"], finding["target"], finding["evidence"])] = {**finding, "protocols": []}
+            continue
+        protocol_match = re.search(r"\b(HTTP|HTTPS)\b", finding.get("description", ""))
+        if not protocol_match:
+            grouped[("raw", finding["id"], finding["target"], finding["evidence"])] = {**finding, "protocols": []}
+            continue
+        key = ("header", finding["id"], finding["target"], finding["title"])
+        entry = grouped.setdefault(
+            key,
+            {
+                **finding,
+                "description": re.sub(r"\bon the (?:HTTP|HTTPS) response\b", "on the observed responses", finding["description"]),
+                "evidence": finding["evidence"],
+                "protocols": [],
+            },
+        )
+        protocol = protocol_match.group(1)
+        if protocol not in entry["protocols"]:
+            entry["protocols"].append(protocol)
+        if finding["evidence"] != entry["evidence"]:
+            entry["evidence"] = f"Protocols: {', '.join(entry['protocols'])}. {entry['evidence']}"
+    ordered = list(grouped.values())
+    ordered.sort(key=lambda finding: severity_sort_key(finding.get("severity", "info"), finding.get("id", "")))
+    return ordered
 
 
 def compare_reports(old_report: dict, new_report: dict) -> ReportDiff:

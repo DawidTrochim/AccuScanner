@@ -8,6 +8,7 @@ from mininessus.checks.http import (
     HttpObservation,
     HttpSecurityCheck,
     configure_browser_assistance,
+    configure_web_request_context,
     fetch_http_observation,
 )
 from mininessus.checks.ports import RiskyPortCheck
@@ -395,6 +396,61 @@ def test_http_security_check_includes_browser_assisted_surface(mock_fetch, mock_
     assert "form_field: username" in evidences
     assert "query_parameter: token" in evidences
     assert "script_endpoint: https://app.example/api/me" in evidences
+
+
+@patch("mininessus.checks.http._open_http_request")
+def test_fetch_http_observation_uses_configured_web_session_headers(mock_open_request):
+    captured_headers: dict[str, str] = {}
+
+    def side_effect(request, original_url: str, *, timeout: int, verify_tls: bool):
+        captured_headers.update(dict(request.header_items()))
+        return HttpObservation(url=original_url, status=200, headers={"server": "nginx"}, body_preview="ok", redirected_to_https=False)
+
+    mock_open_request.side_effect = side_effect
+    configure_web_request_context(extra_headers={"Cookie": "session=abc", "Authorization": "Bearer token"})
+    try:
+        fetch_http_observation("https://app.example")
+    finally:
+        configure_web_request_context(extra_headers={})
+
+    assert captured_headers.get("Cookie") == "session=abc"
+    assert captured_headers.get("Authorization") == "Bearer token"
+
+
+@patch("mininessus.checks.http.fetch_http_observation")
+def test_http_security_check_extracts_inline_dynamic_endpoints_from_older_page(mock_fetch):
+    def fake_fetch(
+        url: str,
+        timeout: int = 5,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+    ) -> HttpObservation:
+        if method in {"OPTIONS", "TRACE"}:
+            return HttpObservation(url=url, status=405, headers={}, redirected_to_https=False)
+        if url == "https://app.example":
+            return HttpObservation(
+                url=url,
+                status=200,
+                headers={"server": "apache"},
+                body_preview='<script>window.location.href="/portal/login.php?return=dashboard"; var api="/service/status.php";</script>',
+                redirected_to_https=False,
+            )
+        return HttpObservation(url=url, status=404, headers={}, body_preview="Not Found", redirected_to_https=False)
+
+    host = HostResult(
+        address="203.0.113.10",
+        hostname="app.example",
+        status="up",
+        ports=[PortService(port=443, protocol="tcp", state="open", service="https", tunnel="ssl")],
+    )
+
+    mock_fetch.side_effect = fake_fetch
+    findings = list(HttpSecurityCheck().run([host], "https://app.example"))
+
+    evidences = {finding.evidence for finding in findings if finding.category == "attack_surface"}
+    assert "script_endpoint: https://app.example/portal/login.php?return=dashboard" in evidences
+    assert "script_endpoint: https://app.example/service/status.php" in evidences
+    assert "query_parameter: return" in evidences
 
 
 @patch("mininessus.checks.tls.fetch_http_observation")

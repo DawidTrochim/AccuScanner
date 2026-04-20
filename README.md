@@ -20,6 +20,8 @@ AccuScanner is a defensive, Nessus-inspired vulnerability assessment tool built 
 - YAML scan profiles with ignore rules and reusable scan settings
 - Authenticated Linux host review over SSH
 - Authenticated Windows host review over WinRM
+- Local static code scanning for secrets, insecure patterns, and configuration issues
+- Read-only PostgreSQL and MySQL posture scanning with user-supplied audit credentials
 - Local CVE mapping from detected service/version data
 - Aggregate dashboard generation across many reports
 - Exports JSON, HTML, and optional raw XML
@@ -170,6 +172,12 @@ pip install -e ".[browser]"
 python -m playwright install chromium
 ```
 
+If you want database posture scanning:
+
+```bash
+pip install -e ".[database]"
+```
+
 ## Windows Setup
 
 1. Install Python 3.11+
@@ -246,6 +254,24 @@ Browser-assisted web scan:
 
 ```bash
 accuscanner scan https://app.internal.example --mode web --browser-assisted --browser-max-pages 6 --timestamped-dir
+```
+
+Authenticated web session scan:
+
+```bash
+accuscanner scan https://app.internal.example --mode web --web-cookie "session=abc123" --web-header "Authorization: Bearer ey..." --browser-assisted --timestamped-dir
+```
+
+Code scan:
+
+```bash
+accuscanner code-scan /path/to/repo --timestamped-dir
+```
+
+Database scan:
+
+```bash
+accuscanner db-scan --db-type postgres --host db.internal --port 5432 --database appdb --user audit --password "secret" --timestamped-dir
 ```
 
 Interactive launcher:
@@ -342,6 +368,7 @@ Example automation assets live in [examples/scan-profile.yml](examples/scan-prof
 - Host inventory and open ports
 - Asset-grouped remediation recommendations
 - Dedicated discovered attack-surface inventory for web scans
+- Grouped header findings in HTML so HTTP and HTTPS hardening gaps read more cleanly
 - Full finding cards with evidence, confidence, tags, and remediation guidance
 
 ## Dashboard Output
@@ -411,6 +438,8 @@ GitHub Actions runs the test suite on pushes and pull requests using Ubuntu and 
 - Web review is intentionally passive and unauthenticated: it inventories and flags exposed attack surface, but it does not perform active exploitation or destructive testing
 - Default JavaScript-aware discovery is lightweight and best-effort rather than full browser-driven crawling
 - Browser-assisted mode adds rendered route, form, and client-request discovery, but it still avoids active exploitation and does not submit arbitrary POST workflows by default
+- Code scanning is local-path based in v1 and does not clone repositories automatically
+- Database scanning is read-only in v1 and expects explicit PostgreSQL or MySQL credentials supplied by the user
 - Scan results still depend on network reachability and the target's filtering behavior
 
 ## Ethical Use

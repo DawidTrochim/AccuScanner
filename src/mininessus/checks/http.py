@@ -154,6 +154,12 @@ SCRIPT_API_CALL_PATTERNS = (
     re.compile(r"""axios\.(?:get|post|put|delete|patch)\(\s*["']([^"']+)["']""", re.IGNORECASE),
     re.compile(r"""open\(\s*["'][A-Z]+["']\s*,\s*["']([^"']+)["']""", re.IGNORECASE),
     re.compile(r"""url\s*:\s*["']([^"']+)["']""", re.IGNORECASE),
+    re.compile(r"""(?:location(?:\.href)?|document\.location|window\.open|window\.location(?:\.href)?)\s*=\s*["']([^"']+)["']""", re.IGNORECASE),
+    re.compile(r"""(?:navigate|redirect|endpoint|path)\s*:\s*["']([^"']+)["']""", re.IGNORECASE),
+)
+INLINE_ENDPOINT_PATTERN = re.compile(
+    r"""(?:"|')((?:https?://[^"'\\\s]+|/[A-Za-z0-9._~!$&()*+,;=:@%/\-?=&]+(?:\.(?:php|asp|aspx|jsp|json|xml|do|action))?(?:\?[^"'\\\s]*)?))(?:"|')""",
+    re.IGNORECASE,
 )
 PASSWORD_RESET_FIELD_NAMES = {"email", "username", "user", "token", "reset_token", "new_password", "password", "confirm_password"}
 ROBOTS_PATH_PATTERN = re.compile(r"^(?:allow|disallow):\s*(\S+)", re.IGNORECASE | re.MULTILINE)
@@ -209,6 +215,14 @@ BROWSER_ASSISTANCE = BrowserAssistConfig()
 
 
 @dataclass(slots=True)
+class WebRequestContext:
+    extra_headers: dict[str, str] = field(default_factory=dict)
+
+
+WEB_REQUEST_CONTEXT = WebRequestContext()
+
+
+@dataclass(slots=True)
 class HttpObservation:
     url: str
     status: int | None
@@ -225,6 +239,10 @@ def configure_browser_assistance(*, enabled: bool, max_pages: int | None = None,
     BROWSER_ASSISTANCE.timeout_ms = timeout_ms or BROWSER_TIMEOUT_MS
 
 
+def configure_web_request_context(*, extra_headers: dict[str, str] | None = None) -> None:
+    WEB_REQUEST_CONTEXT.extra_headers = dict(extra_headers or {})
+
+
 def fetch_http_observation(
     url: str,
     timeout: int = 5,
@@ -232,6 +250,7 @@ def fetch_http_observation(
     headers: dict[str, str] | None = None,
 ) -> HttpObservation:
     request_headers = {"User-Agent": USER_AGENT}
+    request_headers.update(WEB_REQUEST_CONTEXT.extra_headers)
     if headers:
         request_headers.update(headers)
     request = Request(url, headers=request_headers, method=method)
@@ -1165,7 +1184,7 @@ class HttpSecurityCheck(BaseCheck):
                 discoveries.append(SurfaceDiscovery(kind="query_parameter", url=parameter_name))
             for field_name in self._extract_form_field_names(observation.body_preview):
                 discoveries.append(SurfaceDiscovery(kind="form_field", url=field_name))
-            if self._looks_like_script_asset(normalized_current):
+            if self._looks_like_script_asset(normalized_current) or self._looks_like_page_with_dynamic_hints(normalized_current, observation):
                 for endpoint in self._extract_script_endpoints(normalized_current, observation.body_preview, base_netloc):
                     discoveries.append(SurfaceDiscovery(kind="script_endpoint", url=endpoint))
 
@@ -1180,6 +1199,7 @@ class HttpSecurityCheck(BaseCheck):
                 base_url,
                 max_pages=BROWSER_ASSISTANCE.max_pages,
                 timeout_ms=BROWSER_ASSISTANCE.timeout_ms,
+                extra_headers=WEB_REQUEST_CONTEXT.extra_headers,
             )
         except BrowserDiscoveryUnavailable as exc:
             logger.warning("Browser-assisted discovery unavailable: %s", exc)
@@ -1262,6 +1282,7 @@ class HttpSecurityCheck(BaseCheck):
         for pattern in SCRIPT_API_CALL_PATTERNS:
             candidates.extend(pattern.findall(body_preview or ""))
         candidates.extend(SCRIPT_ENDPOINT_PATTERN.findall(body_preview or ""))
+        candidates.extend(INLINE_ENDPOINT_PATTERN.findall(body_preview or ""))
         for raw_value in candidates:
             normalized = self._normalize_surface_url(urljoin(base_url, raw_value))
             if not normalized:
@@ -1271,7 +1292,7 @@ class HttpSecurityCheck(BaseCheck):
                 continue
             if self._looks_like_document(normalized) or self._looks_like_static_asset(normalized) or self._looks_like_script_asset(normalized):
                 continue
-            if not self._looks_like_api_endpoint(normalized):
+            if not self._looks_like_endpoint_candidate(normalized):
                 continue
             if normalized not in endpoints:
                 endpoints.append(normalized)
@@ -1342,9 +1363,16 @@ class HttpSecurityCheck(BaseCheck):
         return cls._path_extension(url) == ".js"
 
     @staticmethod
-    def _looks_like_api_endpoint(url: str) -> bool:
+    def _looks_like_endpoint_candidate(url: str) -> bool:
         lowered = urlparse(url).path.lower()
-        return any(token in lowered for token in ("/api", "/graphql", "/rest", "/services", "/json", "/xml", "/soap", "/ajax", "/endpoint"))
+        return any(token in lowered for token in ("/api", "/graphql", "/rest", "/services", "/json", "/xml", "/soap", "/ajax", "/endpoint", "/portal", "/service", "/auth", "/login")) or lowered.endswith((".php", ".asp", ".aspx", ".jsp", ".do", ".action"))
+
+    @staticmethod
+    def _looks_like_page_with_dynamic_hints(url: str, observation: HttpObservation) -> bool:
+        if HttpSecurityCheck._looks_like_static_asset(url) or HttpSecurityCheck._looks_like_document(url):
+            return False
+        body = observation.body_preview or ""
+        return any(pattern.search(body) for pattern in SCRIPT_API_CALL_PATTERNS) or bool(INLINE_ENDPOINT_PATTERN.search(body))
 
     @staticmethod
     def _looks_like_partial_asset_path(url: str) -> bool:

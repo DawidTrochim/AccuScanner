@@ -89,3 +89,19 @@ def test_main_launches_interactive_menu_when_no_arguments(
     assert exit_code == 0
     mock_interactive_menu.assert_called_once()
     mock_run_schedule.assert_called_once()
+
+
+@patch("mininessus.cli.run_code_scan", return_value=0)
+def test_main_dispatches_code_scan(mock_run_code_scan):
+    exit_code = main(["code-scan", "."])
+
+    assert exit_code == 0
+    mock_run_code_scan.assert_called_once()
+
+
+@patch("mininessus.cli.run_db_scan", return_value=0)
+def test_main_dispatches_db_scan(mock_run_db_scan):
+    exit_code = main(["db-scan", "--db-type", "postgres", "--host", "localhost", "--database", "appdb", "--user", "audit", "--password", "secret"])
+
+    assert exit_code == 0
+    mock_run_db_scan.assert_called_once()

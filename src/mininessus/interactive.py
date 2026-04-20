@@ -20,14 +20,20 @@ def run_interactive_menu() -> list[str] | None:
     print("1. Simple mode")
     print("2. Advanced mode")
     print("3. Custom mode")
-    print("4. Exit")
-    selection = _prompt_choice("Select an option", 4)
+    print("4. Code scan")
+    print("5. Database scan")
+    print("6. Exit")
+    selection = _prompt_choice("Select an option", 6)
     if selection == 1:
         return _simple_mode_args()
     if selection == 2:
         return _advanced_mode_args()
     if selection == 3:
         return _custom_mode_args()
+    if selection == 4:
+        return _code_scan_args()
+    if selection == 5:
+        return _db_scan_args()
     return None
 
 
@@ -73,6 +79,8 @@ def _simple_mode_args() -> list[str]:
         browser_timeout_ms = _prompt_optional("Browser timeout in ms (press Enter for default)")
         if browser_timeout_ms:
             args.extend(["--browser-timeout-ms", browser_timeout_ms])
+    if _mode_from_args(args) == "web":
+        args.extend(_prompt_web_session_args())
     if "--profile" in args and "linux" in args:
         args.extend(_prompt_ssh_args())
     if "--profile" in args and "windows" in args:
@@ -125,6 +133,8 @@ def _advanced_mode_args() -> list[str]:
         browser_timeout_ms = _prompt_optional("Browser timeout in ms (press Enter for default)")
         if browser_timeout_ms:
             args.extend(["--browser-timeout-ms", browser_timeout_ms])
+    if mode == "web":
+        args.extend(_prompt_web_session_args())
 
     nse_categories = _prompt_optional("NSE categories, comma-separated (safe,default,vuln)")
     args.extend(_split_csv_option("--nse-category", nse_categories))
@@ -178,6 +188,65 @@ def _custom_mode_args() -> list[str]:
         print("Please enter a command or choose Exit from the main menu.")
 
 
+def _code_scan_args() -> list[str]:
+    print("\nCode scan reviews a local source tree for secrets, risky code patterns, and insecure configuration signals.")
+    args = ["code-scan", _prompt_required("Local path to source code or repository")]
+    output_dir = _prompt_optional("Output directory (default: reports)")
+    if output_dir:
+        args.extend(["--output-dir", output_dir])
+    if _prompt_yes_no("Create a timestamped report directory", default=True):
+        args.append("--timestamped-dir")
+    if _prompt_yes_no("Save a history copy for dashboards", default=True):
+        args.append("--save-history")
+        history_dir = _prompt_optional("History directory override (press Enter for default)")
+        if history_dir:
+            args.extend(["--history-dir", history_dir])
+    exclude_patterns = _prompt_optional("Exclude path substrings, comma-separated (press Enter to skip)")
+    args.extend(_split_csv_option("--exclude", exclude_patterns))
+    include_patterns = _prompt_optional("Include path substrings, comma-separated (press Enter to skip)")
+    args.extend(_split_csv_option("--include", include_patterns))
+    max_size = _prompt_optional("Maximum file size in KB (default: 256)")
+    if max_size:
+        args.extend(["--max-file-size-kb", max_size])
+    language = _prompt_optional("Language filter such as python, javascript, php, or config (press Enter to skip)")
+    if language:
+        args.extend(["--language", language])
+    return args
+
+
+def _db_scan_args() -> list[str]:
+    print("\nDatabase scan uses user-supplied read-only credentials to inspect PostgreSQL or MySQL posture.")
+    args = ["db-scan"]
+    db_type = _prompt_menu("Select database type", ["postgres", "mysql"])
+    args.extend(["--db-type", db_type])
+    if _prompt_yes_no("Use a connection string instead of separate fields", default=False):
+        args.extend(["--connection-string", _prompt_required("Connection string")])
+    else:
+        args.extend(["--host", _prompt_required("Database host")])
+        port = _prompt_optional(f"Database port (default: {'5432' if db_type == 'postgres' else '3306'})")
+        if port:
+            args.extend(["--port", port])
+        args.extend(["--database", _prompt_required("Database name")])
+        args.extend(["--user", _prompt_required("Database username")])
+        password = getpass.getpass("Database password: ").strip()
+        if password:
+            args.extend(["--password", password])
+    ssl_mode = _prompt_optional("SSL mode or secure transport label (press Enter to skip)")
+    if ssl_mode:
+        args.extend(["--ssl-mode", ssl_mode])
+    output_dir = _prompt_optional("Output directory (default: reports)")
+    if output_dir:
+        args.extend(["--output-dir", output_dir])
+    if _prompt_yes_no("Create a timestamped report directory", default=True):
+        args.append("--timestamped-dir")
+    if _prompt_yes_no("Save a history copy for dashboards", default=True):
+        args.append("--save-history")
+        history_dir = _prompt_optional("History directory override (press Enter for default)")
+        if history_dir:
+            args.extend(["--history-dir", history_dir])
+    return args
+
+
 def _common_scan_args() -> list[str]:
     args: list[str] = []
     if _prompt_yes_no("Create a timestamped report directory", default=True):
@@ -219,6 +288,17 @@ def _prompt_winrm_args() -> list[str]:
         args.extend(["--winrm-transport", transport])
     if _prompt_yes_no("Use HTTPS for WinRM", default=False):
         args.append("--winrm-ssl")
+    return args
+
+
+def _prompt_web_session_args() -> list[str]:
+    args: list[str] = []
+    web_cookie = _prompt_optional("Session cookie header for authenticated web scanning (press Enter to skip)")
+    if web_cookie:
+        args.extend(["--web-cookie", web_cookie])
+    web_headers = _prompt_optional("Extra web headers as comma-separated 'Name: Value' entries (press Enter to skip)")
+    for header in [value.strip() for value in web_headers.split(",") if value.strip()]:
+        args.extend(["--web-header", header])
     return args
 
 

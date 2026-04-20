@@ -35,6 +35,10 @@ gcp = [
 browser = [
   "playwright>=1.53.0",
 ]
+database = [
+  "pg8000>=1.31.2",
+  "PyMySQL>=1.1.1",
+]
 
 [project.scripts]
 accuscanner = "mininessus.cli:main"

@@ -12,8 +12,10 @@ from time import perf_counter
 from .aws_checks import run_aws_checks
 from .azure_checks import run_azure_checks
 from .checks import run_checks
-from .checks.http import configure_browser_assistance
+from .checks.http import configure_browser_assistance, configure_web_request_context
+from .code_scan import scan_codebase
 from .config import ScanConfig, load_scan_config, merge_scan_config
+from .db_scan import build_database_config, scan_database
 from .discovery import DiscoveryError, build_extra_nmap_args, run_nmap
 from .gcp_checks import run_gcp_checks
 from .history import load_history_reports, store_scan_history
@@ -122,6 +124,57 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--browser-assisted", action="store_true", help="Use a headless browser to render pages and discover JS-driven routes during web scans")
     scan.add_argument("--browser-max-pages", type=int, default=None, help="Maximum rendered pages to inspect when --browser-assisted is enabled")
     scan.add_argument("--browser-timeout-ms", type=int, default=None, help="Browser navigation timeout in milliseconds for --browser-assisted web scans")
+    scan.add_argument("--web-cookie", default=None, help="Cookie header value to include in web requests, useful for authenticated session scanning")
+    scan.add_argument("--web-header", action="append", default=None, help="Extra header for web requests in 'Name: Value' form; can be repeated")
+
+    code_scan = subparsers.add_parser(
+        "code-scan",
+        help="Run a static code and configuration scan against a local source tree",
+        description="Scan a local source tree for secrets, insecure implementation patterns, and risky configuration signals.",
+        formatter_class=SmartFormatter,
+    )
+    code_scan.add_argument("-help", action="help", help=argparse.SUPPRESS)
+    code_scan.add_argument("path", help="Local path to the source repository or application folder")
+    code_scan.add_argument("--output-dir", default="reports", help="Base directory for exported reports")
+    code_scan.add_argument("--timestamped-dir", action="store_true", help="Create a timestamped report subdirectory")
+    code_scan.add_argument("--json-name", default=None, help="Optional JSON filename override")
+    code_scan.add_argument("--html-name", default=None, help="Optional HTML filename override")
+    code_scan.add_argument("--markdown-name", default=None, help="Optional Markdown filename to export alongside the main report")
+    code_scan.add_argument("--csv-name", default=None, help="Optional CSV filename to export alongside the main report")
+    code_scan.add_argument("--sarif-name", default=None, help="Optional SARIF filename to export alongside the main report")
+    code_scan.add_argument("--save-history", action="store_true", help="Copy the JSON report into a history directory for trend tracking")
+    code_scan.add_argument("--history-dir", default=None, help="History directory used by --save-history and dashboard trend views")
+    code_scan.add_argument("--exclude", action="append", default=None, help="Substring path filter to exclude; can be repeated")
+    code_scan.add_argument("--include", action="append", default=None, help="Substring path filter to include; can be repeated")
+    code_scan.add_argument("--max-file-size-kb", type=int, default=256, help="Maximum file size to inspect")
+    code_scan.add_argument("--language", default=None, help="Optional language filter such as python, javascript, php, or config")
+    code_scan.add_argument("--verbose", action="store_true", help="Enable debug logging")
+
+    db_scan = subparsers.add_parser(
+        "db-scan",
+        help="Run a read-only database posture scan",
+        description="Connect to PostgreSQL or MySQL using user-supplied audit credentials and run safe read-only posture checks.",
+        formatter_class=SmartFormatter,
+    )
+    db_scan.add_argument("-help", action="help", help=argparse.SUPPRESS)
+    db_scan.add_argument("--db-type", choices=["postgres", "mysql"], required=False, help="Database engine")
+    db_scan.add_argument("--connection-string", default=None, help="Connection string such as postgres://user:pass@host:5432/db")
+    db_scan.add_argument("--host", default=None, help="Database host")
+    db_scan.add_argument("--port", type=int, default=None, help="Database port")
+    db_scan.add_argument("--database", default=None, help="Database name")
+    db_scan.add_argument("--user", default=None, help="Database username")
+    db_scan.add_argument("--password", default=None, help="Database password")
+    db_scan.add_argument("--ssl-mode", default=None, help="Optional SSL mode or secure-transport preference label")
+    db_scan.add_argument("--output-dir", default="reports", help="Base directory for exported reports")
+    db_scan.add_argument("--timestamped-dir", action="store_true", help="Create a timestamped report subdirectory")
+    db_scan.add_argument("--json-name", default=None, help="Optional JSON filename override")
+    db_scan.add_argument("--html-name", default=None, help="Optional HTML filename override")
+    db_scan.add_argument("--markdown-name", default=None, help="Optional Markdown filename to export alongside the main report")
+    db_scan.add_argument("--csv-name", default=None, help="Optional CSV filename to export alongside the main report")
+    db_scan.add_argument("--sarif-name", default=None, help="Optional SARIF filename to export alongside the main report")
+    db_scan.add_argument("--save-history", action="store_true", help="Copy the JSON report into a history directory for trend tracking")
+    db_scan.add_argument("--history-dir", default=None, help="History directory used by --save-history and dashboard trend views")
+    db_scan.add_argument("--verbose", action="store_true", help="Enable debug logging")
 
     compare = subparsers.add_parser(
         "compare",
@@ -191,6 +244,8 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--browser-assisted", action="store_true", help="Use a headless browser to render pages and discover JS-driven routes during web scans")
     batch.add_argument("--browser-max-pages", type=int, default=None, help="Maximum rendered pages to inspect when --browser-assisted is enabled")
     batch.add_argument("--browser-timeout-ms", type=int, default=None, help="Browser navigation timeout in milliseconds for --browser-assisted web scans")
+    batch.add_argument("--web-cookie", default=None, help="Cookie header value to include in web requests, useful for authenticated session scanning")
+    batch.add_argument("--web-header", action="append", default=None, help="Extra header for web requests in 'Name: Value' form; can be repeated")
 
     dashboard = subparsers.add_parser(
         "dashboard",
@@ -233,16 +288,25 @@ def build_parser() -> argparse.ArgumentParser:
 def build_report_paths(
     args: argparse.Namespace,
     target_override: str | None = None,
+    mode_override: str | None = None,
 ) -> tuple[Path, Path, Path, Path | None, Path | None, Path | None]:
     report_dir = ensure_output_dir(args.output_dir, args.timestamped_dir)
-    stem = build_report_stem(target_override or args.target, args.mode)
+    target_value = target_override or getattr(args, "target", None) or getattr(args, "path", None) or "scan"
+    scan_mode = mode_override or getattr(args, "mode", None) or "scan"
+    stem = build_report_stem(target_value, scan_mode)
+    json_name = getattr(args, "json_name", None)
+    html_name = getattr(args, "html_name", None)
+    xml_name = getattr(args, "xml_name", None)
+    markdown_name = getattr(args, "markdown_name", None)
+    csv_name = getattr(args, "csv_name", None)
+    sarif_name = getattr(args, "sarif_name", None)
     return (
-        report_dir / (args.json_name or f"{stem}.json"),
-        report_dir / (args.html_name or f"{stem}.html"),
-        report_dir / (args.xml_name or f"{stem}.xml"),
-        report_dir / args.markdown_name if args.markdown_name else None,
-        report_dir / args.csv_name if args.csv_name else None,
-        report_dir / args.sarif_name if args.sarif_name else None,
+        report_dir / (json_name or f"{stem}.json"),
+        report_dir / (html_name or f"{stem}.html"),
+        report_dir / (xml_name or f"{stem}.xml"),
+        report_dir / markdown_name if markdown_name else None,
+        report_dir / csv_name if csv_name else None,
+        report_dir / sarif_name if sarif_name else None,
     )
 
 
@@ -343,6 +407,8 @@ def resolve_scan_config(args: argparse.Namespace) -> ScanConfig:
     config.browser_assisted = bool(args.browser_assisted or config.browser_assisted)
     config.browser_max_pages = merge_scan_config(args.browser_max_pages, config.browser_max_pages)
     config.browser_timeout_ms = merge_scan_config(args.browser_timeout_ms, config.browser_timeout_ms)
+    config.web_cookie = merge_scan_config(args.web_cookie, config.web_cookie)
+    config.web_headers = list(args.web_header or config.web_headers)
     config.ignore_ids.update(args.ignore_id or [])
     return apply_profile(config, config.profile)
 
@@ -362,6 +428,91 @@ def run_scan(args: argparse.Namespace) -> int:
         sarif_path,
         history_path,
     )
+    return 1 if result.errors else 0
+
+
+def run_code_scan(args: argparse.Namespace) -> int:
+    configure_logging(args.verbose)
+    start_clock = perf_counter()
+    started_at = utc_now_iso()
+    target, findings, errors = scan_codebase(
+        args.path,
+        excludes=args.exclude,
+        includes=args.include,
+        max_file_size_kb=args.max_file_size_kb,
+        language=args.language,
+    )
+    result = ScanResult(
+        metadata=ScanMetadata(
+            target=target,
+            scan_mode="code",
+            started_at=started_at,
+            ended_at=utc_now_iso(),
+            duration_seconds=round(perf_counter() - start_clock, 2),
+            nmap_command=[],
+        ),
+        hosts=[],
+        findings=findings,
+        errors=errors,
+    )
+    paths = build_report_paths(args, target_override=target, mode_override="code")
+    json_path, html_path, xml_path, markdown_path, csv_path, sarif_path = paths
+    write_json_report(result, json_path)
+    write_html_report(result, html_path)
+    if markdown_path:
+        write_markdown_report(result, markdown_path)
+    if csv_path:
+        write_csv_report(result, csv_path)
+    if sarif_path:
+        write_sarif_report(result, sarif_path)
+    history_path = store_scan_history(result, json_path, args.history_dir) if args.save_history else None
+    print_summary(result, json_path, html_path, None, markdown_path, csv_path, sarif_path, history_path)
+    return 1 if result.errors else 0
+
+
+def run_db_scan(args: argparse.Namespace) -> int:
+    configure_logging(args.verbose)
+    start_clock = perf_counter()
+    started_at = utc_now_iso()
+    db_type = args.db_type
+    if not db_type and not args.connection_string:
+        raise ValueError("Provide either --db-type or --connection-string for database scanning.")
+    config = build_database_config(
+        db_type=db_type or "",
+        host=args.host,
+        port=args.port,
+        database=args.database,
+        user=args.user,
+        password=args.password,
+        connection_string=args.connection_string,
+        ssl_mode=args.ssl_mode,
+    )
+    target, findings, errors = scan_database(config)
+    result = ScanResult(
+        metadata=ScanMetadata(
+            target=target,
+            scan_mode=f"db-{config.db_type}",
+            started_at=started_at,
+            ended_at=utc_now_iso(),
+            duration_seconds=round(perf_counter() - start_clock, 2),
+            nmap_command=[],
+        ),
+        hosts=[],
+        findings=findings,
+        errors=errors,
+    )
+    paths = build_report_paths(args, target_override=target, mode_override=f"db-{config.db_type}")
+    json_path, html_path, xml_path, markdown_path, csv_path, sarif_path = paths
+    write_json_report(result, json_path)
+    write_html_report(result, html_path)
+    if markdown_path:
+        write_markdown_report(result, markdown_path)
+    if csv_path:
+        write_csv_report(result, csv_path)
+    if sarif_path:
+        write_sarif_report(result, sarif_path)
+    history_path = store_scan_history(result, json_path, args.history_dir) if args.save_history else None
+    print_summary(result, json_path, html_path, None, markdown_path, csv_path, sarif_path, history_path)
     return 1 if result.errors else 0
 
 
@@ -387,6 +538,7 @@ def _run_scan_for_target(
         max_pages=scan_config.browser_max_pages,
         timeout_ms=scan_config.browser_timeout_ms,
     )
+    configure_web_request_context(extra_headers=_build_web_request_headers(scan_config))
     json_path, html_path, xml_path, markdown_path, csv_path, sarif_path = build_report_paths(args, target_override=target)
     start_clock = perf_counter()
     started_at = utc_now_iso()
@@ -549,7 +701,8 @@ def print_summary(
     print(f"Target: {result.metadata.target}")
     print(f"Mode: {result.metadata.scan_mode}")
     print(f"Duration: {result.metadata.duration_seconds}s")
-    print(f"Hosts discovered: {len(result.hosts)}")
+    if result.hosts or result.metadata.scan_mode in {"quick", "full", "web", "aws", "azure", "gcp"}:
+        print(f"Hosts discovered: {len(result.hosts)}")
     print(f"Severity score: {result.severity_score()}")
     print("Severity summary:")
     for severity, count in totals.items():
@@ -587,6 +740,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "scan":
         return run_scan(args)
+    if args.command == "code-scan":
+        return run_code_scan(args)
+    if args.command == "db-scan":
+        return run_db_scan(args)
     if args.command == "batch":
         return run_batch(args)
     if args.command == "compare":
@@ -693,3 +850,18 @@ def _render_schedule(schedule_format: str, command: str) -> str:
         'schtasks /Create /SC DAILY /ST 02:00 /TN "AccuScanner Scan" '
         f'/TR "{command}"'
     )
+
+
+def _build_web_request_headers(scan_config: ScanConfig) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for raw_header in scan_config.web_headers:
+        if ":" not in raw_header:
+            continue
+        name, value = raw_header.split(":", 1)
+        name = name.strip()
+        value = value.strip()
+        if name:
+            headers[name] = value
+    if scan_config.web_cookie:
+        headers["Cookie"] = scan_config.web_cookie
+    return headers
