@@ -32,6 +32,25 @@ def test_code_scan_finds_secrets_and_sql_patterns():
         root.rmdir()
 
 
+def test_code_scan_finds_sql_query_assignment_patterns():
+    root = Path("test-code-scan-sql-assignment")
+    app_path = root / "app.py"
+    root.mkdir(exist_ok=True)
+    try:
+        app_path.write_text(
+            'query = f"SELECT * FROM users WHERE id = {user_id}"\n',
+            encoding="utf-8",
+        )
+
+        _target, findings, errors = scan_codebase(str(root), language="python")
+
+        assert not errors
+        assert any(finding.title == "Possible SQL query string concatenation" for finding in findings)
+    finally:
+        app_path.unlink(missing_ok=True)
+        root.rmdir()
+
+
 def test_code_scan_respects_excludes():
     root = Path("test-code-scan-exclude")
     root.mkdir(exist_ok=True)

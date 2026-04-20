@@ -102,7 +102,13 @@ PATTERN_RULES = [
         "Possible SQL query string concatenation",
         "high",
         "code_injection",
-        re.compile(r"(?i)\b(?:execute|query|cursor\.execute|mysql_query|pg_query)\s*\([^)\n]*(?:select|insert|update|delete)[^)\n]*(?:\+|%s|\{.+\}|format\()"),
+        re.compile(
+            r"(?i)(?:"
+            r"\b(?:execute|query|cursor\.execute|mysql_query|pg_query)\s*\([^)\n]*(?:select|insert|update|delete)[^)\n]*(?:\+|%s|\{.+\}|format\()"
+            r"|"
+            r"\b(?:query|sql|statement|stmt|command)\w*\s*=\s*(?:f[\"']|[\"']).*(?:select|insert|update|delete).*(?:\{.+\}|\+|%s|format\()"
+            r")"
+        ),
         "Use parameterized queries or prepared statements instead of building SQL queries through string concatenation or interpolation.",
         ["code", "injection", "sql"],
     ),
