@@ -101,8 +101,12 @@ def _scan_postgres(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
                 cursor,
                 """
                 SELECT
-                    has_schema_privilege('PUBLIC', 'public', 'USAGE') AS public_usage,
-                    has_schema_privilege('PUBLIC', 'public', 'CREATE') AS public_create
+                    BOOL_OR(privilege_type = 'USAGE') AS public_usage,
+                    BOOL_OR(privilege_type = 'CREATE') AS public_create
+                FROM pg_namespace
+                CROSS JOIN LATERAL aclexplode(COALESCE(nspacl, acldefault('n', nspowner))) AS privileges
+                WHERE nspname = 'public'
+                  AND privileges.grantee = 0
                 """,
             )
             sensitive_columns = _fetch_all_rows(

@@ -442,6 +442,7 @@ def run_code_scan(args: argparse.Namespace) -> int:
         max_file_size_kb=args.max_file_size_kb,
         language=args.language,
     )
+    report_label = Path(target).name or "code-scan"
     result = ScanResult(
         metadata=ScanMetadata(
             target=target,
@@ -455,7 +456,7 @@ def run_code_scan(args: argparse.Namespace) -> int:
         findings=findings,
         errors=errors,
     )
-    paths = build_report_paths(args, target_override=target, mode_override="code")
+    paths = build_report_paths(args, target_override=report_label, mode_override="code")
     json_path, html_path, xml_path, markdown_path, csv_path, sarif_path = paths
     write_json_report(result, json_path)
     write_html_report(result, html_path)

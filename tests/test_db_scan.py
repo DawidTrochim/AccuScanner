@@ -71,7 +71,7 @@ class _FakeCursor:
             return ("on",)
         if "select current_user" in query:
             return ("audit_user",)
-        if "has_schema_privilege" in query:
+        if "bool_or(privilege_type = 'usage')" in query or "aclexplode" in query:
             return (True, False)
         return None
 

@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AccuScanner Report</title>
+  <style>
+    :root {
+      --bg: #f3f6fb;
+      --panel: rgba(255, 255, 255, 0.92);
+      --panel-strong: #ffffff;
+      --text: #142033;
+      --muted: #52627a;
+      --line: #d7e1ee;
+      --critical: #8b1e5d;
+      --high: #d14343;
+      --medium: #c77d19;
+      --low: #1e88a8;
+      --info: #2d8f60;
+      --shadow: 0 20px 45px rgba(20, 32, 51, 0.08);
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(30,136,168,0.10), transparent 28%),
+        radial-gradient(circle at top right, rgba(139,30,93,0.08), transparent 25%),
+        linear-gradient(180deg, #f8fbff 0%, var(--bg) 100%);
+    }
+    .wrap { max-width: 1320px; margin: 0 auto; padding: 32px 20px 48px; }
+    .hero, .panel {
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,0.7);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+    .hero {
+      padding: 28px;
+      margin-bottom: 24px;
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 20px;
+    }
+    .eyebrow {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #e7eef7;
+      color: #39516f;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 14px 0 10px; font-size: 34px; line-height: 1.1; }
+    .lead { margin: 0; color: var(--muted); max-width: 72ch; }
+    .meta-grid, .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 14px;
+    }
+    .priority-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+    .metric, .summary-card {
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px 16px;
+    }
+    .metric .label, .summary-card .label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+    .metric .value, .summary-card .value {
+      font-size: 22px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+    .summary-card { position: relative; overflow: hidden; }
+    .summary-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 5px;
+      background: var(--line);
+    }
+    .summary-card.critical::before { background: var(--critical); }
+    .summary-card.high::before { background: var(--high); }
+    .summary-card.medium::before { background: var(--medium); }
+    .summary-card.low::before { background: var(--low); }
+    .summary-card.info::before { background: var(--info); }
+    .summary-card.total::before { background: #3f5d7d; }
+    .stack { display: grid; gap: 24px; }
+    .panel { padding: 22px; }
+    h2 { margin: 0 0 18px; font-size: 22px; }
+    .table-wrap { overflow-x: auto; border-radius: 16px; border: 1px solid var(--line); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel-strong);
+      min-width: 880px;
+    }
+    th, td {
+      text-align: left;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      background: #eef4fb;
+      color: #30445f;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    tr:last-child td { border-bottom: none; }
+    .severity-pill {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #fff;
+    }
+    .severity-pill.critical { background: var(--critical); }
+    .severity-pill.high { background: var(--high); }
+    .severity-pill.medium { background: var(--medium); }
+    .severity-pill.low { background: var(--low); }
+    .severity-pill.info { background: var(--info); }
+    .mono {
+      font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      background: #eef4fb;
+      border: 1px solid #d9e4f2;
+      border-radius: 10px;
+      padding: 3px 8px;
+      display: inline-block;
+    }
+    .muted { color: var(--muted); }
+    .findings-list {
+      display: grid;
+      gap: 16px;
+    }
+    .finding-card {
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+      border-left: 6px solid #93a5be;
+      border-radius: 16px;
+      padding: 18px;
+    }
+    .finding-card.critical { border-left-color: var(--critical); }
+    .finding-card.high { border-left-color: var(--high); }
+    .finding-card.medium { border-left-color: var(--medium); }
+    .finding-card.low { border-left-color: var(--low); }
+    .finding-card.info { border-left-color: var(--info); }
+    .finding-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .finding-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0;
+    }
+    .finding-meta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .tag {
+      display: inline-block;
+      margin-right: 6px;
+      margin-top: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #eef4fb;
+      color: #35506d;
+      font-size: 12px;
+    }
+    .finding-section-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #51647e;
+      margin: 14px 0 6px;
+      font-weight: 700;
+    }
+    .empty {
+      padding: 22px;
+      border: 1px dashed var(--line);
+      border-radius: 16px;
+      background: rgba(255,255,255,0.75);
+      color: var(--muted);
+    }
+    .priority-card {
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 18px;
+    }
+    .priority-card h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+    .asset-group {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .asset-title {
+      margin: 0;
+      font-size: 18px;
+    }
+    @media (max-width: 900px) {
+      .hero { grid-template-columns: 1fr; }
+      h1 { font-size: 28px; }
+      .wrap { padding: 20px 14px 36px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div>
+        <span class="eyebrow">AccuScanner Report</span>
+        <h1>Defensive Vulnerability Assessment Summary</h1>
+        <p class="lead">Structured export generated from nmap-based discovery, targeted validation checks, and severity-based finding analysis.</p>
+      </div>
+      <div class="meta-grid">
+        <div class="metric"><div class="label">Target</div><div class="value">C:\AccuScanner\tmp_code_scan_smoke</div></div>
+        <div class="metric"><div class="label">Mode</div><div class="value">CODE</div></div>
+        <div class="metric"><div class="label">Started</div><div class="value">2026-04-20T12:41:06Z</div></div>
+        <div class="metric"><div class="label">Ended</div><div class="value">2026-04-20T12:41:06Z</div></div>
+        <div class="metric"><div class="label">Duration</div><div class="value">0.01s</div></div>
+        <div class="metric"><div class="label">Hosts</div><div class="value">0</div></div>
+      </div>
+    </section>
+
+    <div class="stack">
+      <section class="panel">
+        <h2>Severity Overview</h2>
+        <div class="summary-grid">
+          
+          <div class="summary-card critical">
+            <div class="label">critical</div>
+            <div class="value">0</div>
+          </div>
+          
+          <div class="summary-card high">
+            <div class="label">high</div>
+            <div class="value">1</div>
+          </div>
+          
+          <div class="summary-card medium">
+            <div class="label">medium</div>
+            <div class="value">1</div>
+          </div>
+          
+          <div class="summary-card low">
+            <div class="label">low</div>
+            <div class="value">0</div>
+          </div>
+          
+          <div class="summary-card info">
+            <div class="label">info</div>
+            <div class="value">0</div>
+          </div>
+          
+          <div class="summary-card total">
+            <div class="label">total findings</div>
+            <div class="value">2</div>
+          </div>
+          <div class="summary-card total">
+            <div class="label">severity score</div>
+            <div class="value">11</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Top Risks</h2>
+        
+        <div class="priority-grid">
+          
+          <article class="priority-card">
+            <span class="severity-pill high">high</span>
+            <h3>Potential AWS access key in source</h3>
+            <div class="muted">app.py</div>
+            
+            <div class="finding-section-title">Recommendation</div>
+            <div>Remove embedded cloud credentials from source files and move them into a secure secret store.</div>
+          </article>
+          
+          <article class="priority-card">
+            <span class="severity-pill medium">medium</span>
+            <h3>Debug mode enabled in code or config</h3>
+            <div class="muted">app.py</div>
+            
+            <div class="finding-section-title">Recommendation</div>
+            <div>Disable debug mode in production-facing code and configuration.</div>
+          </article>
+          
+        </div>
+        
+      </section>
+
+      <section class="panel">
+        <h2>Scan Metadata</h2>
+        <p class="muted">Reproducibility details captured at export time.</p>
+        <p><span class="mono"></span></p>
+      </section>
+
+      <section class="panel">
+        <h2>Discovered Hosts</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Address</th><th>Hostname</th><th>Status</th><th>Open Ports</th><th>OS Matches</th></tr>
+            </thead>
+            <tbody>
+              
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Remediation By Asset</h2>
+        
+          
+          <section class="asset-group">
+            <h3 class="asset-title">app.py</h3>
+            
+            <article class="priority-card">
+              <div class="finding-top">
+                <strong>Potential AWS access key in source</strong>
+                <span class="severity-pill high">high</span>
+              </div>
+              <div class="muted">code_secrets | CODE-SECRET-001-app.py-2</div>
+              <div class="finding-section-title">Recommendation</div>
+              <div>Remove embedded cloud credentials from source files and move them into a secure secret store.</div>
+            </article>
+            
+            <article class="priority-card">
+              <div class="finding-top">
+                <strong>Debug mode enabled in code or config</strong>
+                <span class="severity-pill medium">medium</span>
+              </div>
+              <div class="muted">code_config | CODE-CONFIG-001-app.py-1</div>
+              <div class="finding-section-title">Recommendation</div>
+              <div>Disable debug mode in production-facing code and configuration.</div>
+            </article>
+            
+          </section>
+          
+        
+      </section>
+
+      <section class="panel">
+        <h2>Discovered Attack Surface</h2>
+        
+        <div class="empty">No additional same-host application pages, assets, forms, or parameter signals were cataloged during this scan.</div>
+        
+      </section>
+
+      <section class="panel">
+        <h2>Findings</h2>
+        
+        <div class="findings-list">
+          
+          <article class="finding-card high">
+            <div class="finding-top">
+              <h3 class="finding-title">Potential AWS access key in source</h3>
+              <span class="severity-pill high">high</span>
+            </div>
+            <div class="finding-meta">
+              <span><strong>ID:</strong> <span class="mono">CODE-SECRET-001-app.py-2</span></span>
+              <span><strong>Category:</strong> code_secrets</span>
+              <span><strong>Target:</strong> app.py</span>
+              <span><strong>Confidence:</strong> medium</span>
+              
+            </div>
+            
+            <div>
+              
+              <span class="tag">code</span>
+              
+              <span class="tag">secrets</span>
+              
+              <span class="tag">cloud</span>
+              
+            </div>
+            
+            <div class="finding-section-title">Description</div>
+            <div>A potential secret or credential-like value was detected in source code or configuration.</div>
+            <div class="finding-section-title">Evidence</div>
+            <div>app.py:2: AWS_KEY='AKIA1234567890ABCDEF'</div>
+            <div class="finding-section-title">Recommendation</div>
+            <div>Remove embedded cloud credentials from source files and move them into a secure secret store.</div>
+          </article>
+          
+          <article class="finding-card medium">
+            <div class="finding-top">
+              <h3 class="finding-title">Debug mode enabled in code or config</h3>
+              <span class="severity-pill medium">medium</span>
+            </div>
+            <div class="finding-meta">
+              <span><strong>ID:</strong> <span class="mono">CODE-CONFIG-001-app.py-1</span></span>
+              <span><strong>Category:</strong> code_config</span>
+              <span><strong>Target:</strong> app.py</span>
+              <span><strong>Confidence:</strong> medium</span>
+              
+            </div>
+            
+            <div>
+              
+              <span class="tag">code</span>
+              
+              <span class="tag">config</span>
+              
+            </div>
+            
+            <div class="finding-section-title">Description</div>
+            <div>A source pattern associated with insecure implementation or configuration was detected.</div>
+            <div class="finding-section-title">Evidence</div>
+            <div>app.py:1: DEBUG = True</div>
+            <div class="finding-section-title">Recommendation</div>
+            <div>Disable debug mode in production-facing code and configuration.</div>
+          </article>
+          
+        </div>
+        
+      </section>
+    </div>
+  </div>
+</body>
+</html>

@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 from pathlib import Path
 
-from mininessus.cli import _load_batch_targets, execute_scan, main
+from mininessus.cli import _load_batch_targets, build_report_paths, execute_scan, main
 from mininessus.discovery import NmapExecution
 from mininessus.models import HostResult
 
@@ -105,3 +105,21 @@ def test_main_dispatches_db_scan(mock_run_db_scan):
 
     assert exit_code == 0
     mock_run_db_scan.assert_called_once()
+
+
+def test_build_report_paths_uses_readable_code_scan_label():
+    args = main.__globals__["argparse"].Namespace(
+        output_dir="reports",
+        timestamped_dir=False,
+        json_name=None,
+        html_name=None,
+        xml_name=None,
+        markdown_name=None,
+        csv_name=None,
+        sarif_name=None,
+    )
+
+    json_path, html_path, *_ = build_report_paths(args, target_override="myrepo", mode_override="code")
+
+    assert "myrepo-code-" in json_path.name
+    assert "myrepo-code-" in html_path.name
