@@ -106,6 +106,53 @@ def test_code_scan_finds_framework_and_file_handling_patterns():
         root.rmdir()
 
 
+def test_code_scan_finds_dependency_manifest_issues():
+    root = Path("test-code-scan-dependencies")
+    root.mkdir(exist_ok=True)
+    requirements_path = root / "requirements.txt"
+    package_json_path = root / "package.json"
+    pyproject_path = root / "pyproject.toml"
+    try:
+        requirements_path.write_text(
+            "flask>=3.0.0\n"
+            "-e ../shared-lib\n",
+            encoding="utf-8",
+        )
+        package_json_path.write_text(
+            "{\n"
+            '  "dependencies": {\n'
+            '    "express": "^4.18.0",\n'
+            '    "internal-lib": "file:../internal-lib"\n'
+            "  },\n"
+            '  "scripts": {\n'
+            '    "preinstall": "node bootstrap.js"\n'
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        pyproject_path.write_text(
+            "[project]\n"
+            "dependencies = [\n"
+            '  "requests>=2.31.0",\n'
+            '  "internal-lib @ git+https://example.invalid/internal-lib.git",\n'
+            "]\n",
+            encoding="utf-8",
+        )
+
+        _target, findings, errors = scan_codebase(str(root))
+
+        assert not errors
+        titles = {finding.title for finding in findings}
+        assert "Unpinned or weakly pinned dependency specification" in titles
+        assert "Direct VCS or local path dependency detected" in titles
+        assert "Package install hook script present" in titles
+    finally:
+        requirements_path.unlink(missing_ok=True)
+        package_json_path.unlink(missing_ok=True)
+        pyproject_path.unlink(missing_ok=True)
+        root.rmdir()
+
+
 def test_code_scan_respects_excludes():
     root = Path("test-code-scan-exclude")
     root.mkdir(exist_ok=True)

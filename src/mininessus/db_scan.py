@@ -64,11 +64,13 @@ def scan_database(config: DatabaseConfig) -> tuple[str, list[Finding], list[str]
         return config.target, *_scan_postgres(config)
     if config.db_type == "mysql":
         return config.target, *_scan_mysql(config)
+    if config.db_type == "mssql":
+        return config.target, *_scan_mssql(config)
     return config.target, [], [f"Unsupported database type: {config.db_type}"]
 
 
 def default_port_for_db(db_type: str) -> int:
-    return {"postgres": 5432, "mysql": 3306}.get(db_type.lower(), 0)
+    return {"postgres": 5432, "mysql": 3306, "mssql": 1433}.get(db_type.lower(), 0)
 
 
 def _scan_postgres(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
@@ -345,6 +347,142 @@ def _scan_mysql(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
             findings.extend(_sensitive_name_findings(config.target, sensitive_columns, "mysql"))
     except Exception as exc:
         errors.append(f"MySQL inspection failed: {exc}")
+    finally:
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+    return findings, errors
+
+
+def _scan_mssql(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
+    try:
+        import pytds  # type: ignore[import-not-found]
+    except ImportError:
+        return [], ["MSSQL scanning requires optional dependency `python-tds`. Install it with `pip install -e \".[database]\"`."]
+
+    findings: list[Finding] = []
+    errors: list[str] = []
+    try:
+        connection = pytds.connect(
+            dsn=config.host,
+            port=config.port,
+            database=config.database or None,
+            user=config.user or None,
+            password=config.password or None,
+            cafile=None,
+            timeout=5,
+            login_timeout=5,
+            autocommit=True,
+            use_mars=False,
+        )
+    except Exception as exc:
+        return [], [f"MSSQL connection failed: {exc}"]
+
+    try:
+        with closing(connection.cursor()) as cursor:
+            version = _safe_fetch_one_value(cursor, "SELECT @@VERSION")
+            current_login = _safe_fetch_one_value(cursor, "SELECT ORIGINAL_LOGIN()")
+            encrypt_option = _safe_fetch_one_value(
+                cursor,
+                """
+                SELECT TOP 1 encrypt_option
+                FROM sys.dm_exec_connections
+                WHERE session_id = @@SPID
+                """,
+            )
+            sysadmin_status = _safe_fetch_one_value(cursor, "SELECT IS_SRVROLEMEMBER('sysadmin')")
+            xp_cmdshell_value = _safe_fetch_one_value(
+                cursor,
+                """
+                SELECT CAST(value_in_use AS INT)
+                FROM sys.configurations
+                WHERE name = 'xp_cmdshell'
+                """,
+            )
+            sensitive_columns = _safe_fetch_all_rows(
+                cursor,
+                """
+                SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA')
+                """,
+            )
+            if version:
+                findings.append(
+                    _db_finding(
+                        "DB-MSSQL-001",
+                        "MSSQL server version inventory",
+                        "info",
+                        "db_posture",
+                        config.target,
+                        "Detected Microsoft SQL Server version information for the connected server.",
+                        f"Version: {version}",
+                        "Keep database versions current and align patching with supported release trains.",
+                        ["database", "mssql"],
+                    )
+                )
+            if current_login:
+                findings.append(
+                    _db_finding(
+                        "DB-MSSQL-003",
+                        "Database login context captured",
+                        "info",
+                        "db_auth",
+                        config.target,
+                        "The scanner confirmed the active SQL Server login for the audit session.",
+                        f"Current login: {current_login}",
+                        "Use a dedicated low-privilege read-only audit account for posture scans.",
+                        ["database", "mssql", "auth"],
+                    )
+                )
+            if str(encrypt_option).lower() not in {"true", "mandatory", "yes"}:
+                findings.append(
+                    _db_finding(
+                        "DB-MSSQL-002",
+                        "MSSQL connection encryption not confirmed",
+                        "medium",
+                        "db_transport",
+                        config.target,
+                        "The active SQL Server session does not appear to confirm encrypted transport.",
+                        f"encrypt_option => {encrypt_option}",
+                        "Enable and require TLS for SQL Server connections where possible.",
+                        ["database", "mssql", "transport"],
+                    )
+                )
+            if str(sysadmin_status).strip() == "1":
+                findings.append(
+                    _db_finding(
+                        "DB-MSSQL-004",
+                        "MSSQL audit account is a sysadmin",
+                        "medium",
+                        "db_privileges",
+                        config.target,
+                        "The supplied SQL Server account appears to be a member of the sysadmin server role.",
+                        f"IS_SRVROLEMEMBER('sysadmin') => {sysadmin_status}",
+                        "Reduce the scan account to a narrower read-only role where possible.",
+                        ["database", "mssql", "privileges"],
+                    )
+                )
+            if str(xp_cmdshell_value).strip() == "1":
+                findings.append(
+                    _db_finding(
+                        "DB-MSSQL-006",
+                        "MSSQL xp_cmdshell enabled",
+                        "medium",
+                        "db_posture",
+                        config.target,
+                        "The xp_cmdshell feature appears to be enabled on SQL Server.",
+                        f"xp_cmdshell => {xp_cmdshell_value}",
+                        "Disable xp_cmdshell unless it is operationally required and tightly restricted.",
+                        ["database", "mssql", "posture"],
+                    )
+                )
+            findings.extend(_sensitive_name_findings(config.target, sensitive_columns, "mssql"))
+        return findings, errors
+    except Exception as exc:
+        errors.append(f"MSSQL inspection failed: {exc}")
     finally:
         try:
             connection.close()

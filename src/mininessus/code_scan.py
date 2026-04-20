@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
 from .models import Finding, build_finding
@@ -222,6 +223,36 @@ PATTERN_RULES = [
     ),
 ]
 
+DEPENDENCY_RULES = [
+    (
+        "CODE-DEPS-001",
+        "Unpinned or weakly pinned dependency specification",
+        "medium",
+        "code_dependencies",
+        "Dependency manifests include package versions that are not strictly pinned.",
+        "Pin dependencies to reviewed versions where practical and use a dependency update process that includes security review.",
+        ["code", "dependencies", "supply-chain"],
+    ),
+    (
+        "CODE-DEPS-002",
+        "Direct VCS or local path dependency detected",
+        "medium",
+        "code_dependencies",
+        "A dependency manifest references a direct VCS URL or local editable/path dependency.",
+        "Review whether direct VCS or local-path dependencies are necessary and ensure their provenance and update path are tightly controlled.",
+        ["code", "dependencies", "supply-chain"],
+    ),
+    (
+        "CODE-DEPS-003",
+        "Package install hook script present",
+        "low",
+        "code_dependencies",
+        "A Node package manifest declares install-time lifecycle scripts that deserve manual review.",
+        "Review lifecycle scripts such as preinstall or install to make sure dependency installation does not execute unsafe commands.",
+        ["code", "dependencies", "nodejs", "manual-review"],
+    ),
+]
+
 
 def scan_codebase(
     path: str,
@@ -266,6 +297,7 @@ def scan_codebase(
             errors.append(f"Failed to read {file_path}: {exc}")
             continue
         findings.extend(_scan_file_content(relative_path, content))
+        findings.extend(_scan_dependency_manifest(relative_path, content))
 
     return str(root), findings, errors
 
@@ -314,6 +346,143 @@ def _scan_file_content(relative_path: str, content: str) -> list[Finding]:
                 )
             )
     return findings
+
+
+def _scan_dependency_manifest(relative_path: str, content: str) -> list[Finding]:
+    manifest_name = Path(relative_path).name.lower()
+    findings: list[Finding] = []
+    if manifest_name == "requirements.txt":
+        findings.extend(_scan_requirements_manifest(relative_path, content))
+    elif manifest_name == "pyproject.toml":
+        findings.extend(_scan_pyproject_manifest(relative_path, content))
+    elif manifest_name == "package.json":
+        findings.extend(_scan_package_json_manifest(relative_path, content))
+    return findings
+
+
+def _scan_requirements_manifest(relative_path: str, content: str) -> list[Finding]:
+    findings: list[Finding] = []
+    for line_number, raw_line in enumerate(content.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        normalized = line.lower()
+        if normalized.startswith(("-e ", "--editable ")):
+            findings.append(_dependency_finding("CODE-DEPS-002", relative_path, line_number, raw_line))
+            continue
+        if any(marker in normalized for marker in ("git+", "svn+", "hg+", "bzr+", "file://", " @ file:", " @ git+")):
+            findings.append(_dependency_finding("CODE-DEPS-002", relative_path, line_number, raw_line))
+            continue
+        if "==" not in line and not line.startswith(("-r ", "--requirement ")):
+            findings.append(_dependency_finding("CODE-DEPS-001", relative_path, line_number, raw_line))
+    return findings
+
+
+def _scan_pyproject_manifest(relative_path: str, content: str) -> list[Finding]:
+    findings: list[Finding] = []
+    in_dependencies_block = False
+    for line_number, raw_line in enumerate(content.splitlines(), start=1):
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("["):
+            in_dependencies_block = stripped in {
+                "[project]",
+                "[project.optional-dependencies]",
+                "[tool.poetry.dependencies]",
+                "[tool.poetry.group.dev.dependencies]",
+            }
+        if stripped.startswith("dependencies = ["):
+            in_dependencies_block = True
+            continue
+        if not in_dependencies_block and not any(token in stripped for token in ("dependencies", "optional-dependencies", "tool.poetry.dependencies")):
+            continue
+        if not any(ch in stripped for ch in ('"', "'")):
+            continue
+        lowered = stripped.lower()
+        if any(marker in lowered for marker in ("git+", "path =", "url =", "develop = true", "editable = true")):
+            findings.append(_dependency_finding("CODE-DEPS-002", relative_path, line_number, raw_line))
+            continue
+        if _looks_like_unpinned_dependency_spec(stripped):
+            findings.append(_dependency_finding("CODE-DEPS-001", relative_path, line_number, raw_line))
+    return findings
+
+
+def _scan_package_json_manifest(relative_path: str, content: str) -> list[Finding]:
+    findings: list[Finding] = []
+    current_section: str | None = None
+    install_script_names = {"preinstall", "install", "postinstall", "prepare"}
+    dependency_sections = {"dependencies", "devDependencies", "peerDependencies", "optionalDependencies"}
+    for line_number, raw_line in enumerate(content.splitlines(), start=1):
+        stripped = raw_line.strip()
+        section_match = re.match(r'"([^"]+)"\s*:\s*\{', stripped)
+        if section_match:
+            current_section = section_match.group(1)
+            continue
+        if stripped.startswith("}"):
+            current_section = None
+            continue
+        if current_section in dependency_sections:
+            dep_match = re.match(r'"([^"]+)"\s*:\s*"([^"]+)"', stripped)
+            if not dep_match:
+                continue
+            version = dep_match.group(2).strip()
+            lowered = version.lower()
+            if lowered.startswith(("git+", "github:", "file:", "link:", "workspace:", "http://", "https://")):
+                findings.append(_dependency_finding("CODE-DEPS-002", relative_path, line_number, raw_line))
+                continue
+            if _looks_like_unpinned_dependency_spec(version):
+                findings.append(_dependency_finding("CODE-DEPS-001", relative_path, line_number, raw_line))
+        if current_section == "scripts":
+            script_match = re.match(r'"([^"]+)"\s*:\s*"([^"]+)"', stripped)
+            if script_match and script_match.group(1) in install_script_names:
+                findings.append(_dependency_finding("CODE-DEPS-003", relative_path, line_number, raw_line))
+    return findings
+
+
+def _looks_like_unpinned_dependency_spec(spec: str) -> bool:
+    cleaned = spec.strip().strip(",").strip('"').strip("'")
+    lowered = cleaned.lower()
+    if not cleaned:
+        return False
+    if any(marker in lowered for marker in ("git+", "file:", "path =", "url =", "workspace:", "link:", "github:")):
+        return False
+    if "==" in cleaned:
+        return False
+    if re.fullmatch(r"[A-Za-z0-9_.-]+\s*=\s*['\"][^'\"]+['\"]", cleaned):
+        cleaned = cleaned.split("=", 1)[1].strip().strip('"').strip("'")
+        lowered = cleaned.lower()
+        if "==" in cleaned:
+            return False
+    weak_markers: Iterable[str] = ("^", "~", ">=", "<=", ">", "<", "!=", "*")
+    return any(marker in cleaned for marker in weak_markers) or re.fullmatch(r"[A-Za-z0-9_.-]+", cleaned) is not None
+
+
+def _dependency_finding(rule_id: str, relative_path: str, line_number: int, line: str) -> Finding:
+    title, severity, category, description, recommendation, tags = next(
+        (
+            title,
+            severity,
+            category,
+            description,
+            recommendation,
+            tags,
+        )
+        for finding_id, title, severity, category, description, recommendation, tags in DEPENDENCY_RULES
+        if finding_id == rule_id
+    )
+    return build_finding(
+        finding_id=f"{rule_id}-{relative_path}-{line_number}",
+        title=title,
+        severity=severity,
+        category=category,
+        target=relative_path,
+        description=description,
+        evidence=f"{relative_path}:{line_number}: {line.strip()[:240]}",
+        recommendation=recommendation,
+        confidence="medium",
+        tags=tags,
+    )
 
 
 def _should_suppress_match(relative_path: str, line: str, finding_id: str) -> bool:

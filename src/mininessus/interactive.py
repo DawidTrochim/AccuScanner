@@ -198,15 +198,16 @@ def _code_scan_args() -> list[str]:
 
 
 def _db_scan_args() -> list[str]:
-    print("\nDatabase scan uses user-supplied read-only credentials to inspect PostgreSQL or MySQL posture.")
+    print("\nDatabase scan uses user-supplied read-only credentials to inspect PostgreSQL, MySQL, or MSSQL posture.")
     args = ["db-scan"]
-    db_type = _prompt_menu("Select database type", ["postgres", "mysql"])
+    db_type = _prompt_menu("Select database type", ["postgres", "mysql", "mssql"])
     args.extend(["--db-type", db_type])
     if _prompt_yes_no("Use a connection string instead of separate fields", default=False):
         args.extend(["--connection-string", _prompt_required("Connection string")])
     else:
         args.extend(["--host", _prompt_required("Database host")])
-        port = _prompt_optional(f"Database port (default: {'5432' if db_type == 'postgres' else '3306'})")
+        default_port = {"postgres": "5432", "mysql": "3306", "mssql": "1433"}[db_type]
+        port = _prompt_optional(f"Database port (default: {default_port})")
         if port:
             args.extend(["--port", port])
         args.extend(["--database", _prompt_required("Database name")])

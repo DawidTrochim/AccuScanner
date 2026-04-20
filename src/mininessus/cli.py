@@ -146,11 +146,11 @@ def build_parser() -> argparse.ArgumentParser:
     db_scan = subparsers.add_parser(
         "db-scan",
         help="Run a read-only database posture scan",
-        description="Connect to PostgreSQL or MySQL using user-supplied audit credentials and run safe read-only posture checks.",
+        description="Connect to PostgreSQL, MySQL, or MSSQL using user-supplied audit credentials and run safe read-only posture checks.",
         formatter_class=SmartFormatter,
     )
     db_scan.add_argument("-help", action="help", help=argparse.SUPPRESS)
-    db_scan.add_argument("--db-type", choices=["postgres", "mysql"], required=False, help="Database engine")
+    db_scan.add_argument("--db-type", choices=["postgres", "mysql", "mssql"], required=False, help="Database engine")
     db_scan.add_argument("--connection-string", default=None, help="Connection string such as postgres://user:pass@host:5432/db")
     db_scan.add_argument("--host", default=None, help="Database host")
     db_scan.add_argument("--port", type=int, default=None, help="Database port")

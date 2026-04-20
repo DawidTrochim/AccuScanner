@@ -38,6 +38,7 @@ browser = [
 database = [
   "pg8000>=1.31.2",
   "PyMySQL>=1.1.1",
+  "python-tds>=1.16.0",
 ]
 
 [project.scripts]

@@ -21,7 +21,8 @@ AccuScanner is a defensive, Nessus-inspired vulnerability assessment tool built 
 - Authenticated Linux host review over SSH
 - Authenticated Windows host review over WinRM
 - Local static code scanning for secrets, insecure patterns, and configuration issues
-- Read-only PostgreSQL and MySQL posture scanning with user-supplied audit credentials
+- Read-only PostgreSQL, MySQL, and MSSQL posture scanning with user-supplied audit credentials
+- Dependency manifest review for Python and Node projects during code scans
 - Local CVE mapping from detected service/version data
 - Aggregate dashboard generation across many reports
 - Exports JSON, HTML, and optional raw XML
@@ -252,6 +253,12 @@ Database scan:
 accuscanner db-scan --db-type postgres --host db.internal --port 5432 --database appdb --user audit --password "secret" --timestamped-dir
 ```
 
+MSSQL scan:
+
+```bash
+accuscanner db-scan --db-type mssql --host sql.internal --port 1433 --database appdb --user audit --password "secret" --timestamped-dir
+```
+
 Interactive launcher:
 
 ```bash
@@ -407,7 +414,7 @@ GitHub Actions runs the test suite on pushes and pull requests using Ubuntu and 
 - Browser-assisted mode adds rendered route, form, and client-request discovery, but it still avoids active exploitation and does not submit arbitrary POST workflows by default
 - AWS and Azure implementation remains in the codebase but is temporarily hidden from the user-facing CLI and launcher
 - Code scanning is local-path based in v1 and does not clone repositories automatically
-- Database scanning is read-only in v1 and expects explicit PostgreSQL or MySQL credentials supplied by the user
+- Database scanning is read-only in v1 and expects explicit PostgreSQL, MySQL, or MSSQL credentials supplied by the user
 - Scan results still depend on network reachability and the target's filtering behavior
 
 ## Ethical Use
