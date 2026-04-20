@@ -14,8 +14,6 @@ def test_build_schedule_command_includes_scan_options():
         udp_top_ports=20,
         nse_script=["ssl-cert"],
         nse_category=["safe"],
-        enable_aws_checks=True,
-        enable_azure_checks=False,
         enable_gcp_checks=True,
         gcp_project_id="demo-project",
     )
@@ -28,7 +26,6 @@ def test_build_schedule_command_includes_scan_options():
     assert "--udp-top-ports 20" in command
     assert "--nse-script ssl-cert" in command
     assert "--nse-category safe" in command
-    assert "--enable-aws-checks" in command
     assert "--enable-gcp-checks" in command
     assert "--gcp-project-id demo-project" in command
 

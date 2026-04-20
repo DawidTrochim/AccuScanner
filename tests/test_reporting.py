@@ -112,3 +112,57 @@ def test_reporting_writers_emit_markdown_csv_and_sarif():
         csv_path.unlink(missing_ok=True)
         sarif_path.unlink(missing_ok=True)
         output_dir.rmdir()
+
+
+def test_html_report_groups_code_findings_by_category_and_file():
+    result = ScanResult(
+        metadata=ScanMetadata(
+            target="repo-a",
+            scan_mode="code",
+            started_at="2026-04-20T12:00:00Z",
+            ended_at="2026-04-20T12:00:05Z",
+            duration_seconds=5.0,
+            nmap_command=[],
+        ),
+        findings=[
+            Finding(
+                id="CODE-EXEC-001-file1.py-10",
+                title="Shell execution with shell=True detected",
+                severity="high",
+                category="code_execution",
+                target="file1.py",
+                description="Risky shell execution detected.",
+                evidence="file1.py:10: subprocess.run(cmd, shell=True)",
+                recommendation="Avoid shell=True.",
+                confidence="medium",
+                tags=["code"],
+            ),
+            Finding(
+                id="CODE-TLS-001-file1.py-12",
+                title="TLS verification disabled in client request",
+                severity="medium",
+                category="code_transport",
+                target="file1.py",
+                description="TLS verify disabled.",
+                evidence="file1.py:12: requests.get(url, verify=False)",
+                recommendation="Enable TLS verification.",
+                confidence="medium",
+                tags=["code"],
+            ),
+        ],
+    )
+    output_dir = Path("test-code-report-output")
+    output_dir.mkdir(exist_ok=True)
+    html_path = output_dir / "report.html"
+
+    try:
+        write_html_report(result, html_path)
+        html_text = html_path.read_text(encoding="utf-8")
+
+        assert "Code Findings By Category" in html_text
+        assert "Code Findings By File" in html_text
+        assert "code_execution" in html_text
+        assert "file1.py" in html_text
+    finally:
+        html_path.unlink(missing_ok=True)
+        output_dir.rmdir()

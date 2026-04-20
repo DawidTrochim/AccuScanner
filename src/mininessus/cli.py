@@ -9,8 +9,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 
-from .aws_checks import run_aws_checks
-from .azure_checks import run_azure_checks
 from .checks import run_checks
 from .checks.http import configure_browser_assistance, configure_web_request_context
 from .code_scan import scan_codebase
@@ -63,7 +61,6 @@ def build_parser() -> argparse.ArgumentParser:
             "  accuscanner scan 192.168.1.10 --mode quick --timestamped-dir\n"
             "  accuscanner scan https://example.internal --mode web --save-raw-xml\n"
             "  accuscanner scan 10.0.0.0/24 --mode full --config scan-profile.yml\n"
-            "  accuscanner scan 10.0.0.0/24 --mode azure --enable-azure-checks\n"
             "  accuscanner scan perimeter.example --enable-gcp-checks --gcp-project-id my-project\n"
             "  accuscanner dashboard reports/*.json --html-output reports/dashboard.html\n"
             "  accuscanner dashboard --history-dir history --html-output reports/history-dashboard.html\n"
@@ -83,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("-help", action="help", help=argparse.SUPPRESS)
     scan.add_argument("target", help="Authorized target IP, hostname, CIDR range, or URL")
     scan.add_argument("--profile", choices=sorted(PROFILE_PRESETS), default=None, help="Named scan profile preset")
-    scan.add_argument("--mode", choices=["quick", "full", "web", "aws", "azure", "gcp"], default="quick", help="Assessment profile")
+    scan.add_argument("--mode", choices=["quick", "full", "web", "gcp"], default="quick", help="Assessment profile")
     scan.add_argument("--config", default=None, help="Optional YAML scan profile")
     scan.add_argument("--output-dir", default="reports", help="Base directory for exported reports")
     scan.add_argument("--timestamped-dir", action="store_true", help="Create a timestamped report subdirectory")
@@ -93,8 +90,6 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--markdown-name", default=None, help="Optional Markdown filename to export alongside the main report")
     scan.add_argument("--csv-name", default=None, help="Optional CSV filename to export alongside the main report")
     scan.add_argument("--sarif-name", default=None, help="Optional SARIF filename to export alongside the main report")
-    scan.add_argument("--aws-region", default=None, help="AWS region override for aws mode")
-    scan.add_argument("--azure-subscription-id", default=None, help="Azure subscription override for azure mode")
     scan.add_argument("--gcp-project-id", default=None, help="GCP project ID override for GCP checks")
     scan.add_argument("--ports", default=None, help="Custom port expression to pass to nmap, for example 22,80,443 or 1-1024")
     scan.add_argument("--udp-ports", default=None, help="UDP port expression to scan, for example 53,67,123,161")
@@ -107,8 +102,6 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--save-history", action="store_true", help="Copy the JSON report into a history directory for trend tracking")
     scan.add_argument("--history-dir", default=None, help="History directory used by --save-history and dashboard trend views")
     scan.add_argument("--suppressions", default=None, help="YAML or JSON suppression rules file")
-    scan.add_argument("--enable-aws-checks", action="store_true", help="Run AWS posture checks alongside the network scan")
-    scan.add_argument("--enable-azure-checks", action="store_true", help="Run Azure posture checks alongside the network scan")
     scan.add_argument("--enable-gcp-checks", action="store_true", help="Run GCP posture checks alongside the network scan")
     scan.add_argument("--ignore-id", action="append", default=None, help="Finding ID to suppress from the final report; can be repeated")
     scan.add_argument("--plugin-dir", default=None, help="Directory containing custom check plugins")
@@ -217,7 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--targets-file", default=None, help="File containing one target per line")
     batch.add_argument("--workers", type=int, default=4, help="Maximum number of concurrent scans")
     batch.add_argument("--profile", choices=sorted(PROFILE_PRESETS), default=None, help="Named scan profile preset")
-    batch.add_argument("--mode", choices=["quick", "full", "web", "aws", "azure", "gcp"], default="quick", help="Assessment profile")
+    batch.add_argument("--mode", choices=["quick", "full", "web", "gcp"], default="quick", help="Assessment profile")
     batch.add_argument("--config", default=None, help="Optional YAML scan profile")
     batch.add_argument("--output-dir", default="reports", help="Base directory for exported reports")
     batch.add_argument("--timestamped-dir", action="store_true", help="Create a timestamped report subdirectory")
@@ -229,11 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--udp-top-ports", type=int, default=None, help="Optional top UDP ports count")
     batch.add_argument("--nse-script", action="append", default=None, help="Optional NSE script name; can be repeated")
     batch.add_argument("--nse-category", action="append", default=None, help="Optional NSE category; can be repeated")
-    batch.add_argument("--enable-aws-checks", action="store_true", help="Run AWS posture checks alongside the network scan")
-    batch.add_argument("--enable-azure-checks", action="store_true", help="Run Azure posture checks alongside the network scan")
     batch.add_argument("--enable-gcp-checks", action="store_true", help="Run GCP posture checks alongside the network scan")
-    batch.add_argument("--aws-region", default=None, help="AWS region override for aws mode")
-    batch.add_argument("--azure-subscription-id", default=None, help="Azure subscription override for azure mode")
     batch.add_argument("--gcp-project-id", default=None, help="GCP project ID override for GCP checks")
     batch.add_argument("--parallelism", type=int, default=None, help="Minimum nmap parallelism")
     batch.add_argument("--skip-host-discovery", action="store_true", help="Run nmap with -Pn from the start")
@@ -268,7 +257,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     schedule.add_argument("-help", action="help", help=argparse.SUPPRESS)
     schedule.add_argument("target", help="Authorized target IP, hostname, CIDR range, or URL")
-    schedule.add_argument("--mode", choices=["quick", "full", "web", "aws", "azure", "gcp"], default="quick", help="Assessment profile")
+    schedule.add_argument("--mode", choices=["quick", "full", "web", "gcp"], default="quick", help="Assessment profile")
     schedule.add_argument("--format", choices=["cron", "systemd", "windows-task"], default="cron", help="Scheduling snippet format")
     schedule.add_argument("--output-dir", default="reports", help="Base directory for exported reports")
     schedule.add_argument("--timestamped-dir", action="store_true", help="Create timestamped report subdirectories")
@@ -277,8 +266,6 @@ def build_parser() -> argparse.ArgumentParser:
     schedule.add_argument("--udp-top-ports", type=int, default=None, help="Optional top UDP ports count")
     schedule.add_argument("--nse-script", action="append", default=None, help="Optional NSE script name; can be repeated")
     schedule.add_argument("--nse-category", action="append", default=None, help="Optional NSE category; can be repeated")
-    schedule.add_argument("--enable-aws-checks", action="store_true", help="Include AWS checks in the generated command")
-    schedule.add_argument("--enable-azure-checks", action="store_true", help="Include Azure checks in the generated command")
     schedule.add_argument("--enable-gcp-checks", action="store_true", help="Include GCP checks in the generated command")
     schedule.add_argument("--gcp-project-id", default=None, help="Optional GCP project ID to include in the generated command")
     schedule.add_argument("--verbose", action="store_true", help="Enable debug logging")
@@ -338,7 +325,7 @@ def execute_scan(
     raw_xml = ""
 
     try:
-        execution = run_nmap(target, mode if mode != "azure" else "quick", extra_args=extra_nmap_args, skip_host_discovery=skip_host_discovery)
+        execution = run_nmap(target, mode, extra_args=extra_nmap_args, skip_host_discovery=skip_host_discovery)
         nmap_command = execution.command
         raw_xml = execution.stdout
         hosts, findings = parse_scan_execution(execution, target, plugin_dir)
@@ -346,7 +333,7 @@ def execute_scan(
             logger.info("No hosts discovered. Retrying scan with host discovery disabled (-Pn).")
             fallback_execution = run_nmap(
                 target,
-                mode if mode != "azure" else "quick",
+                mode,
                 extra_args=extra_nmap_args,
                 skip_host_discovery=True,
             )
@@ -363,18 +350,10 @@ def execute_scan(
 def apply_cloud_checks(
     findings: list[Finding],
     mode: str,
-    enable_aws_checks: bool,
-    enable_azure_checks: bool,
     enable_gcp_checks: bool,
-    aws_region: str | None,
-    azure_subscription_id: str | None,
     gcp_project_id: str | None,
 ) -> list[Finding]:
     final_findings = list(findings)
-    if mode == "aws" or enable_aws_checks:
-        final_findings.extend(run_aws_checks(aws_region))
-    if mode == "azure" or enable_azure_checks:
-        final_findings.extend(run_azure_checks(azure_subscription_id))
     if mode == "gcp" or enable_gcp_checks:
         final_findings.extend(run_gcp_checks(gcp_project_id))
     return final_findings
@@ -400,9 +379,9 @@ def resolve_scan_config(args: argparse.Namespace) -> ScanConfig:
     config.save_history = bool(args.save_history or config.save_history)
     config.history_dir = merge_scan_config(args.history_dir, config.history_dir)
     config.suppressions_path = merge_scan_config(args.suppressions, config.suppressions_path)
-    config.enable_aws_checks = bool(args.enable_aws_checks or args.mode == "aws" or config.enable_aws_checks)
-    config.enable_azure_checks = bool(args.enable_azure_checks or args.mode == "azure" or config.enable_azure_checks)
-    config.enable_gcp_checks = bool(args.enable_gcp_checks or args.mode == "gcp" or config.enable_gcp_checks)
+    config.enable_aws_checks = False
+    config.enable_azure_checks = False
+    config.enable_gcp_checks = bool(getattr(args, "enable_gcp_checks", False) or args.mode == "gcp" or config.enable_gcp_checks)
     config.plugin_dir = merge_scan_config(args.plugin_dir, config.plugin_dir)
     config.browser_assisted = bool(args.browser_assisted or config.browser_assisted)
     config.browser_max_pages = merge_scan_config(args.browser_max_pages, config.browser_max_pages)
@@ -561,11 +540,7 @@ def _run_scan_for_target(
     findings = apply_cloud_checks(
         findings,
         args.mode,
-        scan_config.enable_aws_checks,
-        scan_config.enable_azure_checks,
         scan_config.enable_gcp_checks,
-        getattr(args, "aws_region", None),
-        getattr(args, "azure_subscription_id", None),
         getattr(args, "gcp_project_id", None),
     )
     findings.extend(run_linux_ssh_checks(hosts, _build_ssh_auth_config(args)))
@@ -702,7 +677,7 @@ def print_summary(
     print(f"Target: {result.metadata.target}")
     print(f"Mode: {result.metadata.scan_mode}")
     print(f"Duration: {result.metadata.duration_seconds}s")
-    if result.hosts or result.metadata.scan_mode in {"quick", "full", "web", "aws", "azure", "gcp"}:
+    if result.hosts or result.metadata.scan_mode in {"quick", "full", "web", "gcp"}:
         print(f"Hosts discovered: {len(result.hosts)}")
     print(f"Severity score: {result.severity_score()}")
     print("Severity summary:")
@@ -826,11 +801,7 @@ def _build_schedule_command(args: argparse.Namespace) -> str:
         parts.extend(["--nse-script", script])
     for category in args.nse_category or []:
         parts.extend(["--nse-category", category])
-    if args.enable_aws_checks:
-        parts.append("--enable-aws-checks")
-    if args.enable_azure_checks:
-        parts.append("--enable-azure-checks")
-    if args.enable_gcp_checks:
+    if getattr(args, "enable_gcp_checks", False):
         parts.append("--enable-gcp-checks")
     if args.gcp_project_id:
         parts.extend(["--gcp-project-id", args.gcp_project_id])

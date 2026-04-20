@@ -3,7 +3,9 @@ from unittest.mock import patch
 
 from pathlib import Path
 
-from mininessus.cli import _load_batch_targets, build_report_paths, execute_scan, main
+import pytest
+
+from mininessus.cli import _load_batch_targets, build_parser, build_report_paths, execute_scan, main
 from mininessus.discovery import NmapExecution
 from mininessus.models import HostResult
 
@@ -124,3 +126,10 @@ def test_build_report_paths_uses_readable_code_scan_label():
 
     assert "myrepo-code-" in json_path.name
     assert "myrepo-code-" in html_path.name
+
+
+def test_parser_rejects_temporarily_disabled_aws_mode():
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["scan", "10.0.0.5", "--mode", "aws"])

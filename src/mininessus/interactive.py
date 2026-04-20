@@ -43,8 +43,6 @@ def _simple_mode_args() -> list[str]:
         ("Quick perimeter scan", ["--mode", "quick"]),
         ("Full TCP scan", ["--mode", "full"]),
         ("Web application scan", ["--mode", "web"]),
-        ("AWS cloud posture scan", ["--mode", "aws", "--enable-aws-checks"]),
-        ("Azure cloud posture scan", ["--mode", "azure", "--enable-azure-checks"]),
         ("GCP cloud posture scan", ["--mode", "gcp", "--enable-gcp-checks"]),
         ("Linux authenticated scan", ["--mode", "full", "--profile", "linux"]),
         ("Windows authenticated scan", ["--mode", "full", "--profile", "windows"]),
@@ -59,14 +57,6 @@ def _simple_mode_args() -> list[str]:
     args.extend(base_args)
     args.extend(_common_scan_args())
 
-    if "--enable-aws-checks" in args or "--mode" in args and _mode_from_args(args) == "aws":
-        region = _prompt_optional("AWS region (press Enter to skip)")
-        if region:
-            args.extend(["--aws-region", region])
-    if "--enable-azure-checks" in args or _mode_from_args(args) == "azure":
-        subscription_id = _prompt_optional("Azure subscription ID (press Enter to skip)")
-        if subscription_id:
-            args.extend(["--azure-subscription-id", subscription_id])
     if "--enable-gcp-checks" in args or _mode_from_args(args) == "gcp":
         project_id = _prompt_optional("GCP project ID (press Enter to skip)")
         if project_id:
@@ -92,7 +82,7 @@ def _advanced_mode_args() -> list[str]:
     print("\nAdvanced mode walks through the full scan configuration.")
     args = ["scan", _prompt_required("Target IP, hostname, CIDR, or URL")]
 
-    mode_options = ["quick", "full", "web", "aws", "azure", "gcp"]
+    mode_options = ["quick", "full", "web", "gcp"]
     mode = _prompt_menu("Select scan mode", mode_options)
     args.extend(["--mode", mode])
 
@@ -153,16 +143,6 @@ def _advanced_mode_args() -> list[str]:
     ignore_ids = _prompt_optional("Finding IDs to suppress, comma-separated")
     args.extend(_split_csv_option("--ignore-id", ignore_ids))
 
-    if mode in {"aws", "quick", "full", "web"} and _prompt_yes_no("Run AWS cloud posture checks too", default=mode == "aws"):
-        args.append("--enable-aws-checks")
-        aws_region = _prompt_optional("AWS region (press Enter to skip)")
-        if aws_region:
-            args.extend(["--aws-region", aws_region])
-    if mode in {"azure", "quick", "full", "web"} and _prompt_yes_no("Run Azure cloud posture checks too", default=mode == "azure"):
-        args.append("--enable-azure-checks")
-        subscription_id = _prompt_optional("Azure subscription ID (press Enter to skip)")
-        if subscription_id:
-            args.extend(["--azure-subscription-id", subscription_id])
     if mode in {"gcp", "quick", "full", "web"} and _prompt_yes_no("Run GCP cloud posture checks too", default=mode == "gcp"):
         args.append("--enable-gcp-checks")
         project_id = _prompt_optional("GCP project ID (press Enter to skip)")

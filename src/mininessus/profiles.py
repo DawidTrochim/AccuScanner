@@ -26,8 +26,6 @@ PROFILE_PRESETS: dict[str, ScanConfig] = {
         udp_ports="53,123,161",
         nse_categories=["safe"],
         save_history=True,
-        enable_aws_checks=True,
-        enable_azure_checks=True,
         enable_gcp_checks=True,
     ),
     "k8s": ScanConfig(

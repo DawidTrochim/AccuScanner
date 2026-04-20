@@ -1,18 +1,18 @@
 # AccuScanner
 
-AccuScanner is a defensive, Nessus-inspired vulnerability assessment tool built in Python for owned and authorized systems. It orchestrates `nmap`, parses structured results, applies modular checks across network, web, TLS, AWS, and Azure posture, and exports polished JSON and HTML reports.
+AccuScanner is a defensive, Nessus-inspired vulnerability assessment tool built in Python for owned and authorized systems. It orchestrates `nmap`, parses structured results, applies modular checks across network, web, TLS, code, database, and GCP posture, and exports polished JSON and HTML reports.
 
 ## Why This Project Is Strong Portfolio Material
 
 - Uses real security tooling instead of reimplementing a port scanner
 - Shows clean Python architecture with modular checks, typed models, config profiles, and plugin loading
 - Produces recruiter-friendly artifacts: styled reports, examples, CI, tests, Docker support, and cross-platform usage docs
-- Covers infrastructure exposure, common web weaknesses, and cloud posture checks in one project
+- Covers infrastructure exposure, common web weaknesses, code and database review, and cloud posture checks in one project
 
 ## Core Capabilities
 
 - CLI built with `argparse`
-- Scan modes: `quick`, `full`, `web`, `aws`, and `azure`
+- Scan modes: `quick`, `full`, `web`, and `gcp`
 - Supports IPs, hostnames, CIDR ranges, and URLs
 - Uses `nmap` through `subprocess` for host discovery, service detection, and version detection
 - Parses `nmap` XML into structured dataclasses
@@ -95,24 +95,11 @@ AccuScanner is a defensive, Nessus-inspired vulnerability assessment tool built 
 - Defender disabled signal
 - Windows version inventory capture
 
-### AWS Checks
+### GCP Checks
 
-- Public S3 bucket indicators
-- Security groups allowing `0.0.0.0/0` on risky ports
-- Public EC2 inventory summary
-- Public RDS detection
-- Internet-facing load balancer summary
-- Weak or missing IAM password policy
-- Public EBS snapshot detection
-- Public AMI detection
-
-### Azure Checks
-
-- Public IP inventory summary
-- NSG rules that allow internet access on risky ports
-- Storage accounts with blob public access enabled
-- Storage accounts with public network access enabled
-- VM inventory summary
+- Public compute instance inventory
+- Risky internet-facing firewall rules
+- Publicly accessible bucket IAM detection
 
 ## Architecture
 
@@ -126,9 +113,8 @@ flowchart TD
     F --> F1[Network Checks]
     F --> F2[Web Checks]
     F --> F3[TLS Checks]
-    F --> F4[AWS Checks]
-    F --> F5[Azure Checks]
-    F --> F6[Custom Plugins]
+    F --> F4[GCP Checks]
+    F --> F5[Custom Plugins]
     E --> G[JSON Report]
     E --> H[HTML Report]
     E --> I[Optional Raw XML Export]
@@ -155,14 +141,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -e .[dev]
-```
-
-If you want AWS and Azure checks:
-
-```bash
-aws configure
-pip install -e ".[azure]"
-az login
 ```
 
 If you want browser-assisted rendered web discovery:
@@ -280,16 +258,10 @@ Interactive launcher:
 python -m accuscanner
 ```
 
-AWS posture scan:
+GCP posture scan:
 
 ```bash
-accuscanner scan 10.0.0.0/24 --mode aws --aws-region eu-west-2 --timestamped-dir
-```
-
-Azure posture scan:
-
-```bash
-accuscanner scan 10.0.0.0/24 --mode azure --azure-subscription-id <subscription-id> --timestamped-dir
+accuscanner scan perimeter.example --mode gcp --gcp-project-id my-project --timestamped-dir
 ```
 
 Custom ports and raw XML export:
@@ -302,12 +274,6 @@ Use a YAML scan profile:
 
 ```bash
 accuscanner scan 18.175.232.63 --mode full --config examples/scan-profile.yml
-```
-
-Enable both cloud providers during the same run:
-
-```bash
-accuscanner scan 18.175.232.63 --mode full --enable-aws-checks --enable-azure-checks --timestamped-dir
 ```
 
 Load custom plugins:
@@ -367,6 +333,7 @@ Example automation assets live in [examples/scan-profile.yml](examples/scan-prof
 - Top risks section for fast triage
 - Host inventory and open ports
 - Asset-grouped remediation recommendations
+- Code-scan grouping by category and file for easier static-analysis review
 - Dedicated discovered attack-surface inventory for web scans
 - Grouped header findings in HTML so HTTP and HTTPS hardening gaps read more cleanly
 - Full finding cards with evidence, confidence, tags, and remediation guidance
@@ -432,12 +399,13 @@ GitHub Actions runs the test suite on pushes and pull requests using Ubuntu and 
 
 - This is a defensive assessment MVP, not a replacement for a full authenticated enterprise scanner
 - Findings are heuristic and exposure-focused
-- AWS and Azure checks depend on valid credentials and permissions
+- GCP checks depend on valid credentials and permissions
 - Authenticated Linux checks require valid SSH access and currently target common Linux administrative patterns only
 - Authenticated Windows checks require valid WinRM access and currently focus on common host-hardening signals
 - Web review is intentionally passive and unauthenticated: it inventories and flags exposed attack surface, but it does not perform active exploitation or destructive testing
 - Default JavaScript-aware discovery is lightweight and best-effort rather than full browser-driven crawling
 - Browser-assisted mode adds rendered route, form, and client-request discovery, but it still avoids active exploitation and does not submit arbitrary POST workflows by default
+- AWS and Azure implementation remains in the codebase but is temporarily hidden from the user-facing CLI and launcher
 - Code scanning is local-path based in v1 and does not clone repositories automatically
 - Database scanning is read-only in v1 and expects explicit PostgreSQL or MySQL credentials supplied by the user
 - Scan results still depend on network reachability and the target's filtering behavior

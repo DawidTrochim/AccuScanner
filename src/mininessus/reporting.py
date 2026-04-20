@@ -371,6 +371,58 @@ HTML_TEMPLATE = Template(
         {% endif %}
       </section>
 
+      {% if report.metadata.scan_mode == "code" %}
+      <section class="panel">
+        <h2>Code Findings By Category</h2>
+        {% if report.code_findings_by_category %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Category</th><th>Count</th><th>Highest Severity</th><th>Examples</th></tr>
+            </thead>
+            <tbody>
+              {% for category in report.code_findings_by_category %}
+              <tr>
+                <td>{{ category.category }}</td>
+                <td>{{ category.count }}</td>
+                <td><span class="severity-pill {{ category.highest_severity }}">{{ category.highest_severity }}</span></td>
+                <td>{{ category.examples | join(", ") }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty">No code findings were generated for this scan.</div>
+        {% endif %}
+      </section>
+
+      <section class="panel">
+        <h2>Code Findings By File</h2>
+        {% if report.code_findings_by_file %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>File</th><th>Count</th><th>Highest Severity</th><th>Categories</th></tr>
+            </thead>
+            <tbody>
+              {% for file_group in report.code_findings_by_file %}
+              <tr>
+                <td>{{ file_group.target }}</td>
+                <td>{{ file_group.count }}</td>
+                <td><span class="severity-pill {{ file_group.highest_severity }}">{{ file_group.highest_severity }}</span></td>
+                <td>{{ file_group.categories | join(", ") }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty">No per-file code findings were generated for this scan.</div>
+        {% endif %}
+      </section>
+      {% endif %}
+
       <section class="panel">
         <h2>Discovered Attack Surface</h2>
         {% if report.attack_surface %}
@@ -492,6 +544,8 @@ def write_html_report(result: ScanResult, path: Path) -> Path:
         target: _group_findings_for_display(findings)
         for target, findings in report["findings_by_target"].items()
     }
+    report["code_findings_by_category"] = _group_code_findings_by_category(report["findings"])
+    report["code_findings_by_file"] = _group_code_findings_by_file(report["findings_by_target"])
     path.write_text(HTML_TEMPLATE.render(report=report), encoding="utf-8")
     return path
 
@@ -643,6 +697,57 @@ def _group_findings_for_display(findings: list[dict]) -> list[dict]:
     ordered = list(grouped.values())
     ordered.sort(key=lambda finding: severity_sort_key(finding.get("severity", "info"), finding.get("id", "")))
     return ordered
+
+
+def _group_code_findings_by_category(findings: list[dict]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+    for finding in findings:
+        if not str(finding.get("id", "")).startswith("CODE-"):
+            continue
+        category = finding.get("category", "unknown")
+        entry = grouped.setdefault(
+            category,
+            {
+                "category": category,
+                "count": 0,
+                "highest_severity": "info",
+                "examples": [],
+            },
+        )
+        entry["count"] += 1
+        if severity_sort_key(finding.get("severity", "info"), "") < severity_sort_key(entry["highest_severity"], ""):
+            entry["highest_severity"] = finding.get("severity", "info")
+        if finding.get("title") not in entry["examples"] and len(entry["examples"]) < 4:
+            entry["examples"].append(finding.get("title"))
+    ordered = list(grouped.values())
+    ordered.sort(key=lambda entry: (severity_sort_key(entry["highest_severity"], ""), -entry["count"], entry["category"]))
+    return ordered
+
+
+def _group_code_findings_by_file(findings_by_target: dict[str, list[dict]]) -> list[dict]:
+    grouped: list[dict] = []
+    for target, findings in findings_by_target.items():
+        code_findings = [finding for finding in findings if str(finding.get("id", "")).startswith("CODE-")]
+        if not code_findings:
+            continue
+        highest_severity = "info"
+        categories: list[str] = []
+        for finding in code_findings:
+            if severity_sort_key(finding.get("severity", "info"), "") < severity_sort_key(highest_severity, ""):
+                highest_severity = finding.get("severity", "info")
+            category = finding.get("category", "unknown")
+            if category not in categories:
+                categories.append(category)
+        grouped.append(
+            {
+                "target": target,
+                "count": len(code_findings),
+                "highest_severity": highest_severity,
+                "categories": categories,
+            }
+        )
+    grouped.sort(key=lambda entry: (severity_sort_key(entry["highest_severity"], ""), -entry["count"], entry["target"]))
+    return grouped
 
 
 def compare_reports(old_report: dict, new_report: dict) -> ReportDiff:
