@@ -149,8 +149,11 @@ class TlsCertificateCheck(BaseCheck):
     def _https_fetch_succeeded(server_name: str, port: int) -> bool:
         default_port = 443
         url = f"https://{server_name}" if port == default_port else f"https://{server_name}:{port}"
-        observation = fetch_http_observation(url, timeout=5, method="HEAD")
-        return observation.status is not None and observation.status < 500
+        for method in ("HEAD", "GET"):
+            observation = fetch_http_observation(url, timeout=5, method=method)
+            if observation.status is not None and observation.status < 500:
+                return True
+        return False
 
     @staticmethod
     def _server_name(target: str, host: HostResult) -> str:

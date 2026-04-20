@@ -427,6 +427,20 @@ def test_tls_check_skips_timeout_noise_when_https_fetch_succeeds(mock_inspect, m
     assert "TLS-004" not in {finding.id for finding in findings}
 
 
+@patch("mininessus.checks.tls.fetch_http_observation")
+@patch("mininessus.checks.tls.inspect_tls_certificate")
+def test_tls_check_skips_timeout_noise_when_head_fails_but_get_succeeds(mock_inspect, mock_fetch_http_observation):
+    mock_inspect.side_effect = TimeoutError("timed out")
+    mock_fetch_http_observation.side_effect = [
+        HttpObservation(url="https://app.internal", status=None, headers={}, redirected_to_https=False, error="timed out"),
+        HttpObservation(url="https://app.internal", status=200, headers={}, redirected_to_https=False),
+    ]
+
+    findings = list(TlsCertificateCheck().run([sample_host()], "https://app.internal"))
+
+    assert "TLS-004" not in {finding.id for finding in findings}
+
+
 @patch("mininessus.checks.tls.inspect_tls_certificate")
 def test_tls_check_prefers_requested_hostname(mock_inspect):
     mock_inspect.return_value = TLSDetails(
