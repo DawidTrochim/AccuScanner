@@ -94,10 +94,12 @@ def _scan_postgres(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
 
     try:
         with closing(connection.cursor()) as cursor:
-            version = _fetch_one_value(cursor, "SELECT version()")
-            ssl_status = _fetch_one_value(cursor, "SHOW ssl")
-            current_user = _fetch_one_value(cursor, "SELECT current_user")
-            public_schema_privileges = _fetch_one_row(
+            version = _safe_fetch_one_value(cursor, "SELECT version()")
+            ssl_status = _safe_fetch_one_value(cursor, "SHOW ssl")
+            current_user = _safe_fetch_one_value(cursor, "SELECT current_user")
+            password_encryption = _safe_fetch_one_value(cursor, "SHOW password_encryption")
+            log_connections = _safe_fetch_one_value(cursor, "SHOW log_connections")
+            public_schema_privileges = _safe_fetch_one_row(
                 cursor,
                 """
                 SELECT
@@ -109,12 +111,23 @@ def _scan_postgres(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
                   AND privileges.grantee = 0
                 """,
             )
-            sensitive_columns = _fetch_all_rows(
+            sensitive_columns = _safe_fetch_all_rows(
                 cursor,
                 """
                 SELECT table_schema, table_name, column_name
                 FROM information_schema.columns
                 WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                """,
+            )
+            sensitive_tables_without_rls = _safe_fetch_all_rows(
+                cursor,
+                """
+                SELECT n.nspname, c.relname
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE c.relkind = 'r'
+                  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                  AND c.relrowsecurity = false
                 """,
             )
             if version:
@@ -145,6 +158,20 @@ def _scan_postgres(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
                         ["database", "postgres", "transport"],
                     )
                 )
+            if str(password_encryption).lower() == "md5":
+                findings.append(
+                    _db_finding(
+                        "DB-POSTGRES-006",
+                        "PostgreSQL password encryption uses MD5",
+                        "medium",
+                        "db_auth",
+                        config.target,
+                        "The server is configured to hash passwords with MD5 instead of SCRAM-SHA-256.",
+                        f"password_encryption => {password_encryption}",
+                        "Prefer SCRAM-SHA-256 for PostgreSQL password hashing and rotate any credentials still stored with weaker schemes.",
+                        ["database", "postgres", "auth"],
+                    )
+                )
             if current_user:
                 findings.append(
                     _db_finding(
@@ -157,6 +184,20 @@ def _scan_postgres(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
                         f"Current user: {current_user}",
                         "Use a dedicated low-privilege read-only audit role for posture scans.",
                         ["database", "postgres", "auth"],
+                    )
+                )
+            if str(log_connections).lower() in {"off", "false", "0"}:
+                findings.append(
+                    _db_finding(
+                        "DB-POSTGRES-007",
+                        "PostgreSQL connection logging disabled",
+                        "low",
+                        "db_posture",
+                        config.target,
+                        "The server does not appear to log client connections.",
+                        f"log_connections => {log_connections}",
+                        "Enable connection logging where appropriate so authentication and access events are easier to audit.",
+                        ["database", "postgres", "logging"],
                     )
                 )
             public_usage = bool(public_schema_privileges[0]) if public_schema_privileges else False
@@ -181,6 +222,7 @@ def _scan_postgres(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
                     )
                 )
             findings.extend(_sensitive_name_findings(config.target, sensitive_columns, "postgres"))
+            findings.extend(_rls_review_findings(config.target, sensitive_columns, sensitive_tables_without_rls, "postgres"))
     except Exception as exc:
         errors.append(f"PostgreSQL inspection failed: {exc}")
     finally:
@@ -217,11 +259,12 @@ def _scan_mysql(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
 
     try:
         with closing(connection.cursor()) as cursor:
-            version = _fetch_one_value(cursor, "SELECT VERSION()")
-            current_user = _fetch_one_value(cursor, "SELECT CURRENT_USER()")
-            require_secure_transport = _fetch_one_value(cursor, "SHOW VARIABLES LIKE 'require_secure_transport'", value_column=1)
-            current_grants = _fetch_all_rows(cursor, "SHOW GRANTS FOR CURRENT_USER()")
-            sensitive_columns = _fetch_all_rows(
+            version = _safe_fetch_one_value(cursor, "SELECT VERSION()")
+            current_user = _safe_fetch_one_value(cursor, "SELECT CURRENT_USER()")
+            require_secure_transport = _safe_fetch_one_value(cursor, "SHOW VARIABLES LIKE 'require_secure_transport'", value_column=1)
+            current_grants = _safe_fetch_all_rows(cursor, "SHOW GRANTS FOR CURRENT_USER()")
+            local_infile = _safe_fetch_one_value(cursor, "SHOW VARIABLES LIKE 'local_infile'", value_column=1)
+            sensitive_columns = _safe_fetch_all_rows(
                 cursor,
                 """
                 SELECT table_schema, table_name, column_name
@@ -255,6 +298,20 @@ def _scan_mysql(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
                         f"require_secure_transport => {require_secure_transport}",
                         "Require TLS for database connections and disable unencrypted transport where possible.",
                         ["database", "mysql", "transport"],
+                    )
+                )
+            if str(local_infile).lower() in {"on", "1", "yes"}:
+                findings.append(
+                    _db_finding(
+                        "DB-MYSQL-006",
+                        "MySQL LOCAL INFILE enabled",
+                        "medium",
+                        "db_posture",
+                        config.target,
+                        "The server reports that LOCAL INFILE is enabled for client file loading.",
+                        f"local_infile => {local_infile}",
+                        "Disable LOCAL INFILE unless it is operationally required and tightly controlled.",
+                        ["database", "mysql", "posture"],
                     )
                 )
             if current_user:
@@ -318,6 +375,27 @@ def _fetch_one_row(cursor, query: str):
     return tuple(row) if isinstance(row, (list, tuple)) else (row,)
 
 
+def _safe_fetch_one_value(cursor, query: str, value_column: int = 0):
+    try:
+        return _fetch_one_value(cursor, query, value_column=value_column)
+    except Exception:
+        return None
+
+
+def _safe_fetch_all_rows(cursor, query: str):
+    try:
+        return _fetch_all_rows(cursor, query)
+    except Exception:
+        return []
+
+
+def _safe_fetch_one_row(cursor, query: str):
+    try:
+        return _fetch_one_row(cursor, query)
+    except Exception:
+        return None
+
+
 def _sensitive_name_findings(target: str, rows: list[tuple], db_type: str) -> list[Finding]:
     findings: list[Finding] = []
     matches: list[str] = []
@@ -343,6 +421,37 @@ def _sensitive_name_findings(target: str, rows: list[tuple], db_type: str) -> li
             )
         )
     return findings
+
+
+def _rls_review_findings(target: str, sensitive_columns: list[tuple], row_security_rows: list[tuple], db_type: str) -> list[Finding]:
+    if db_type != "postgres":
+        return []
+    sensitive_table_names = {
+        f"{row[0]}.{row[1]}".lower()
+        for row in sensitive_columns
+        if len(row) >= 3 and any(marker in f"{row[0]}.{row[1]}.{row[2]}".lower() for marker in SENSITIVE_NAME_MARKERS)
+    }
+    tables_without_rls = {
+        f"{row[0]}.{row[1]}".lower()
+        for row in row_security_rows
+        if len(row) >= 2
+    }
+    impacted = sorted(sensitive_table_names & tables_without_rls)
+    if not impacted:
+        return []
+    return [
+        _db_finding(
+            "DB-POSTGRES-008",
+            "Sensitive-looking PostgreSQL tables do not use row-level security",
+            "low",
+            "db_schema",
+            target,
+            "Tables with sensitive-looking columns were found without PostgreSQL row-level security enabled.",
+            f"Examples: {', '.join(impacted[:10])}",
+            "Review whether row-level security is appropriate for sensitive multi-tenant or user-scoped data tables.",
+            ["database", "postgres", "schema", "manual-review"],
+        )
+    ]
 
 
 def _db_finding(

@@ -139,6 +139,33 @@ PATTERN_RULES = [
         "Review deserialization of untrusted input and switch to safer parsing patterns where possible.",
         ["code", "deserialization"],
     ),
+    (
+        "CODE-EXEC-001",
+        "Shell execution with shell=True detected",
+        "high",
+        "code_execution",
+        re.compile(r"(?i)\b(?:subprocess\.(?:run|popen|call|check_call|check_output)|os\.system)\b[^\n]*\bshell\s*=\s*true"),
+        "Avoid invoking shell commands with shell=True when input can be influenced externally; prefer argument lists and strict validation.",
+        ["code", "execution", "shell"],
+    ),
+    (
+        "CODE-EXEC-002",
+        "Dynamic code execution detected",
+        "high",
+        "code_execution",
+        re.compile(r"(?i)\b(?:eval|exec)\s*\("),
+        "Avoid dynamic code execution on untrusted input and replace it with safer parsing or dispatch patterns.",
+        ["code", "execution"],
+    ),
+    (
+        "CODE-TLS-001",
+        "TLS verification disabled in client request",
+        "medium",
+        "code_transport",
+        re.compile(r"(?i)\b(?:requests\.(?:get|post|put|delete|request|session)|httpx\.(?:get|post|put|delete|request|client))\b[^\n]*\bverify\s*=\s*false"),
+        "Keep certificate verification enabled in outbound requests unless you have a tightly controlled trust model and explicit certificate pinning.",
+        ["code", "transport", "tls"],
+    ),
 ]
 
 
