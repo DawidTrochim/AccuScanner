@@ -97,9 +97,13 @@ def _scan_postgres(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
             version = _fetch_one_value(cursor, "SELECT version()")
             ssl_status = _fetch_one_value(cursor, "SHOW ssl")
             current_user = _fetch_one_value(cursor, "SELECT current_user")
-            public_privileges = _fetch_all_rows(
+            public_schema_privileges = _fetch_one_row(
                 cursor,
-                "SELECT privilege_type FROM information_schema.role_schema_grants WHERE grantee = 'PUBLIC' AND schema_name = 'public'",
+                """
+                SELECT
+                    has_schema_privilege('PUBLIC', 'public', 'USAGE') AS public_usage,
+                    has_schema_privilege('PUBLIC', 'public', 'CREATE') AS public_create
+                """,
             )
             sensitive_columns = _fetch_all_rows(
                 cursor,
@@ -151,7 +155,14 @@ def _scan_postgres(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
                         ["database", "postgres", "auth"],
                     )
                 )
-            if any((row[0] or "").upper() in {"CREATE", "USAGE"} for row in public_privileges):
+            public_usage = bool(public_schema_privileges[0]) if public_schema_privileges else False
+            public_create = bool(public_schema_privileges[1]) if public_schema_privileges and len(public_schema_privileges) > 1 else False
+            if public_usage or public_create:
+                detected_privileges = []
+                if public_usage:
+                    detected_privileges.append("USAGE")
+                if public_create:
+                    detected_privileges.append("CREATE")
                 findings.append(
                     _db_finding(
                         "DB-POSTGRES-004",
@@ -160,7 +171,7 @@ def _scan_postgres(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
                         "db_privileges",
                         config.target,
                         "The PUBLIC role retains access on the default public schema.",
-                        f"Privileges: {', '.join(sorted({row[0] for row in public_privileges if row and row[0]}))}",
+                        f"Privileges: {', '.join(detected_privileges)}",
                         "Review default schema grants and revoke unnecessary PUBLIC access.",
                         ["database", "postgres", "privileges"],
                     )
@@ -293,6 +304,14 @@ def _fetch_one_value(cursor, query: str, value_column: int = 0):
 def _fetch_all_rows(cursor, query: str):
     cursor.execute(query)
     return list(cursor.fetchall() or [])
+
+
+def _fetch_one_row(cursor, query: str):
+    cursor.execute(query)
+    row = cursor.fetchone()
+    if not row:
+        return None
+    return tuple(row) if isinstance(row, (list, tuple)) else (row,)
 
 
 def _sensitive_name_findings(target: str, rows: list[tuple], db_type: str) -> list[Finding]:

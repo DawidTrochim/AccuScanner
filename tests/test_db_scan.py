@@ -71,12 +71,12 @@ class _FakeCursor:
             return ("on",)
         if "select current_user" in query:
             return ("audit_user",)
+        if "has_schema_privilege" in query:
+            return (True, False)
         return None
 
     def fetchall(self):
         query = self.last_query.lower()
-        if "role_schema_grants" in query:
-            return []
         if "information_schema.columns" in query:
             return [("public", "customers", "password_hash")]
         return []
@@ -117,6 +117,6 @@ def test_scan_database_supports_pg8000_cursor_without_context_manager():
 
     assert target == "postgres://127.0.0.1:5432/accuscanner_lab"
     assert not errors
-    assert {finding.id for finding in findings} >= {"DB-POSTGRES-001", "DB-POSTGRES-003", "DB-POSTGRES-005"}
+    assert {finding.id for finding in findings} >= {"DB-POSTGRES-001", "DB-POSTGRES-003", "DB-POSTGRES-004", "DB-POSTGRES-005"}
     assert fake_connection.cursor_instance.closed is True
     assert fake_connection.closed is True
