@@ -190,6 +190,8 @@ def _scan_file_content(relative_path: str, content: str) -> list[Finding]:
             match = pattern.search(line)
             if not match:
                 continue
+            if _should_suppress_match(relative_path, line, finding_id):
+                continue
             findings.append(
                 build_finding(
                     finding_id=f"{finding_id}-{relative_path}-{line_number}",
@@ -208,6 +210,8 @@ def _scan_file_content(relative_path: str, content: str) -> list[Finding]:
             match = pattern.search(line)
             if not match:
                 continue
+            if _should_suppress_match(relative_path, line, finding_id):
+                continue
             findings.append(
                 build_finding(
                     finding_id=f"{finding_id}-{relative_path}-{line_number}",
@@ -223,6 +227,25 @@ def _scan_file_content(relative_path: str, content: str) -> list[Finding]:
                 )
             )
     return findings
+
+
+def _should_suppress_match(relative_path: str, line: str, finding_id: str) -> bool:
+    stripped = line.strip()
+    lowered = stripped.lower()
+
+    # Avoid self-referential hits where the scanner's own regex definitions
+    # contain the patterns it is meant to detect.
+    if relative_path.endswith("code_scan.py") and "re.compile(" in stripped:
+        return True
+
+    # Avoid instructional/example connection strings in CLI help text.
+    if finding_id == "CODE-SECRET-003":
+        if "help=" in lowered or "example" in lowered or "such as" in lowered:
+            return True
+        if any(sample in lowered for sample in ("postgres://user:pass@", "mysql://user:pass@", "mongodb://user:pass@", "mssql://user:pass@")):
+            return True
+
+    return False
 
 
 def _looks_like_env_or_config(filename: str) -> bool:

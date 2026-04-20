@@ -201,8 +201,11 @@ def _code_scan_args() -> list[str]:
         history_dir = _prompt_optional("History directory override (press Enter for default)")
         if history_dir:
             args.extend(["--history-dir", history_dir])
-    exclude_patterns = _prompt_optional("Exclude path substrings, comma-separated (press Enter to skip)")
-    args.extend(_split_csv_option("--exclude", exclude_patterns))
+    exclude_patterns = _prompt_optional("Exclude path substrings, comma-separated (default: tests/)")
+    merged_excludes = ["tests/"]
+    merged_excludes.extend([value.strip() for value in exclude_patterns.split(",") if value.strip()])
+    for value in merged_excludes:
+        args.extend(["--exclude", value])
     include_patterns = _prompt_optional("Include path substrings, comma-separated (press Enter to skip)")
     args.extend(_split_csv_option("--include", include_patterns))
     max_size = _prompt_optional("Maximum file size in KB (default: 256)")

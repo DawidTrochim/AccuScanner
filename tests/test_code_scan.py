@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from mininessus.code_scan import scan_codebase
+from mininessus.interactive import _code_scan_args
 
 
 def test_code_scan_finds_secrets_and_sql_patterns():
@@ -42,3 +43,52 @@ def test_code_scan_respects_excludes():
     finally:
         secret_path.unlink(missing_ok=True)
         root.rmdir()
+
+
+def test_code_scan_ignores_own_regex_definition_and_help_examples():
+    root = Path("test-code-scan-self-noise")
+    root.mkdir(exist_ok=True)
+    scanner_path = root / "code_scan.py"
+    cli_path = root / "cli.py"
+    try:
+        scanner_path.write_text(
+            're.compile(r"(?i)\\\\b(?:pickle\\\\.loads|yaml\\\\.load\\\\s*\\\\(|BinaryFormatter|unserialize\\\\s*\\\\()")\n',
+            encoding="utf-8",
+        )
+        cli_path.write_text(
+            'db_scan.add_argument("--connection-string", help="Connection string such as postgres://user:pass@host:5432/db")\n',
+            encoding="utf-8",
+        )
+
+        _target, findings, errors = scan_codebase(str(root), language="python")
+
+        assert not errors
+        assert findings == []
+    finally:
+        scanner_path.unlink(missing_ok=True)
+        cli_path.unlink(missing_ok=True)
+        root.rmdir()
+
+
+def test_interactive_code_scan_defaults_to_excluding_tests(monkeypatch):
+    responses = iter(
+        [
+            ".",
+            "",
+            "y",
+            "n",
+            "",
+            "",
+            "",
+            "",
+        ]
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(responses))
+
+    args = _code_scan_args()
+
+    assert args[:2] == ["code-scan", "."]
+    assert "--exclude" in args
+    exclude_indexes = [index for index, value in enumerate(args) if value == "--exclude"]
+    excludes = [args[index + 1] for index in exclude_indexes]
+    assert "tests/" in excludes
