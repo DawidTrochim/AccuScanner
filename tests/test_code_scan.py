@@ -76,6 +76,36 @@ def test_code_scan_finds_shell_exec_eval_and_verify_false_patterns():
         root.rmdir()
 
 
+def test_code_scan_finds_framework_and_file_handling_patterns():
+    root = Path("test-code-scan-frameworks")
+    app_path = root / "app.py"
+    root.mkdir(exist_ok=True)
+    try:
+        app_path.write_text(
+            "ALLOWED_HOSTS = ['*']\n"
+            "app.config['SECRET_KEY'] = 'super-secret-key'\n"
+            "WTF_CSRF_ENABLED = False\n"
+            "uploaded_file.save(uploaded_file.filename)\n"
+            "open(request.args['path'])\n"
+            "tempfile.mktemp()\n",
+            encoding="utf-8",
+        )
+
+        _target, findings, errors = scan_codebase(str(root), language="python")
+
+        assert not errors
+        titles = {finding.title for finding in findings}
+        assert "Wildcard Django ALLOWED_HOSTS detected" in titles
+        assert "Flask secret key hardcoded in source" in titles
+        assert "CSRF protection explicitly disabled" in titles
+        assert "Potential unsafe file upload save pattern" in titles
+        assert "Potential path traversal sink with user-controlled path" in titles
+        assert "Insecure temporary file creation detected" in titles
+    finally:
+        app_path.unlink(missing_ok=True)
+        root.rmdir()
+
+
 def test_code_scan_respects_excludes():
     root = Path("test-code-scan-exclude")
     root.mkdir(exist_ok=True)

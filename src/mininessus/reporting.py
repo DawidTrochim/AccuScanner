@@ -373,6 +373,27 @@ HTML_TEMPLATE = Template(
 
       {% if report.metadata.scan_mode == "code" %}
       <section class="panel">
+        <h2>Code Remediation Priorities</h2>
+        {% if report.code_priority_summary %}
+        <div class="priority-grid">
+          {% for item in report.code_priority_summary %}
+          <article class="priority-card">
+            <span class="severity-pill {{ item.severity }}">{{ item.severity }}</span>
+            <h3>{{ item.category }}</h3>
+            <div class="muted">{{ item.count }} finding{{ "" if item.count == 1 else "s" }}</div>
+            <div class="finding-section-title">Why It Matters</div>
+            <div>{{ item.reason }}</div>
+            <div class="finding-section-title">Examples</div>
+            <div>{{ item.examples | join(", ") }}</div>
+          </article>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty">No code remediation priorities were generated for this scan.</div>
+        {% endif %}
+      </section>
+
+      <section class="panel">
         <h2>Code Findings By Category</h2>
         {% if report.code_findings_by_category %}
         <div class="table-wrap">
@@ -544,6 +565,7 @@ def write_html_report(result: ScanResult, path: Path) -> Path:
         target: _group_findings_for_display(findings)
         for target, findings in report["findings_by_target"].items()
     }
+    report["code_priority_summary"] = _build_code_priority_summary(report["findings"])
     report["code_findings_by_category"] = _group_code_findings_by_category(report["findings"])
     report["code_findings_by_file"] = _group_code_findings_by_file(report["findings_by_target"])
     path.write_text(HTML_TEMPLATE.render(report=report), encoding="utf-8")
@@ -748,6 +770,44 @@ def _group_code_findings_by_file(findings_by_target: dict[str, list[dict]]) -> l
         )
     grouped.sort(key=lambda entry: (severity_sort_key(entry["highest_severity"], ""), -entry["count"], entry["target"]))
     return grouped
+
+
+def _build_code_priority_summary(findings: list[dict]) -> list[dict]:
+    reason_map = {
+        "code_execution": "These findings can turn user-controlled input into command or code execution paths.",
+        "code_injection": "These findings indicate application logic that builds unsafe queries or commands from dynamic input.",
+        "code_secrets": "Embedded secrets increase the chance of credential leakage and lateral movement if the repo is exposed.",
+        "code_transport": "Transport-security findings weaken TLS guarantees and can enable interception or spoofing.",
+        "code_framework": "Framework-level hardening gaps often affect many routes and can expose whole application surfaces.",
+        "code_file_handling": "Unsafe file and path handling can lead to traversal, arbitrary write, or upload abuse.",
+        "code_config": "Configuration issues often widen the blast radius of other vulnerabilities in production.",
+        "code_crypto": "Weak cryptography undermines integrity, confidentiality, and credential storage assumptions.",
+        "code_deserialization": "Unsafe deserialization can expose powerful exploit primitives when reachable by untrusted input.",
+    }
+    grouped: dict[str, dict] = {}
+    for finding in findings:
+        if not str(finding.get("id", "")).startswith("CODE-"):
+            continue
+        category = finding.get("category", "unknown")
+        entry = grouped.setdefault(
+            category,
+            {
+                "category": category,
+                "count": 0,
+                "severity": "info",
+                "examples": [],
+                "reason": reason_map.get(category, "Review this category for insecure implementation patterns and production hardening gaps."),
+            },
+        )
+        entry["count"] += 1
+        if severity_sort_key(finding.get("severity", "info"), "") < severity_sort_key(entry["severity"], ""):
+            entry["severity"] = finding.get("severity", "info")
+        title = finding.get("title")
+        if title and title not in entry["examples"] and len(entry["examples"]) < 3:
+            entry["examples"].append(title)
+    ordered = list(grouped.values())
+    ordered.sort(key=lambda entry: (severity_sort_key(entry["severity"], ""), -entry["count"], entry["category"]))
+    return ordered[:6]
 
 
 def compare_reports(old_report: dict, new_report: dict) -> ReportDiff:

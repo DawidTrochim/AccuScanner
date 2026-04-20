@@ -161,6 +161,7 @@ def test_html_report_groups_code_findings_by_category_and_file():
 
         assert "Code Findings By Category" in html_text
         assert "Code Findings By File" in html_text
+        assert "Code Remediation Priorities" in html_text
         assert "code_execution" in html_text
         assert "file1.py" in html_text
     finally:
