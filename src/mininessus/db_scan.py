@@ -401,6 +401,28 @@ def _scan_mssql(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
                 WHERE name = 'xp_cmdshell'
                 """,
             )
+            trustworthy_value = _safe_fetch_one_value(
+                cursor,
+                """
+                SELECT is_trustworthy_on
+                FROM sys.databases
+                WHERE name = DB_NAME()
+                """,
+            )
+            guest_connect_value = _safe_fetch_one_value(
+                cursor,
+                """
+                SELECT CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM sys.database_permissions p
+                    JOIN sys.database_principals dp
+                      ON p.grantee_principal_id = dp.principal_id
+                    WHERE dp.name = 'guest'
+                      AND p.permission_name = 'CONNECT'
+                      AND p.state IN ('G', 'W')
+                ) THEN 1 ELSE 0 END
+                """,
+            )
             sensitive_columns = _safe_fetch_all_rows(
                 cursor,
                 """
@@ -477,6 +499,34 @@ def _scan_mssql(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
                         f"xp_cmdshell => {xp_cmdshell_value}",
                         "Disable xp_cmdshell unless it is operationally required and tightly restricted.",
                         ["database", "mssql", "posture"],
+                    )
+                )
+            if str(trustworthy_value).strip() == "1":
+                findings.append(
+                    _db_finding(
+                        "DB-MSSQL-007",
+                        "MSSQL database TRUSTWORTHY option enabled",
+                        "medium",
+                        "db_posture",
+                        config.target,
+                        "The current SQL Server database has TRUSTWORTHY enabled.",
+                        f"is_trustworthy_on => {trustworthy_value}",
+                        "Disable TRUSTWORTHY unless it is explicitly required and the database ownership model is tightly controlled.",
+                        ["database", "mssql", "posture"],
+                    )
+                )
+            if str(guest_connect_value).strip() == "1":
+                findings.append(
+                    _db_finding(
+                        "DB-MSSQL-008",
+                        "MSSQL guest user CONNECT permission present",
+                        "medium",
+                        "db_privileges",
+                        config.target,
+                        "The guest database principal appears to retain CONNECT permission in the current database.",
+                        f"guest CONNECT => {guest_connect_value}",
+                        "Revoke unnecessary guest access so unauthenticated database principals cannot inherit database connectivity unexpectedly.",
+                        ["database", "mssql", "privileges"],
                     )
                 )
             findings.extend(_sensitive_name_findings(config.target, sensitive_columns, "mssql"))

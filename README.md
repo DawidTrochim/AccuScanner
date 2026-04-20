@@ -1,263 +1,125 @@
 # AccuScanner
 
-AccuScanner is a defensive, Nessus-inspired vulnerability assessment tool built in Python for owned and authorized systems. It orchestrates `nmap`, parses structured results, applies modular checks across network, web, TLS, code, database, and GCP posture, and exports polished JSON and HTML reports.
+AccuScanner is a defensive security assessment tool built in Python. It can run network and web scans, local code scans, and read-only database posture checks, then export JSON and HTML reports.
 
-## Why This Project Is Strong Portfolio Material
+## What It Does
 
-- Uses real security tooling instead of reimplementing a port scanner
-- Shows clean Python architecture with modular checks, typed models, config profiles, and plugin loading
-- Produces recruiter-friendly artifacts: styled reports, examples, CI, tests, Docker support, and cross-platform usage docs
-- Covers infrastructure exposure, common web weaknesses, code and database review, and cloud posture checks in one project
+- Network and service scanning with `nmap`
+- Web application review with passive crawling and optional browser-assisted discovery
+- Local code scanning for secrets, insecure patterns, framework misconfigurations, file-handling issues, and dependency manifest risks
+- Read-only database posture scanning for PostgreSQL, MySQL, and MSSQL
+- JSON and HTML report generation
+- Interactive launcher for guided usage
 
-## Core Capabilities
+## Current Scan Modes
 
-- CLI built with `argparse`
-- Scan modes: `quick`, `full`, `web`, and `gcp`
-- Supports IPs, hostnames, CIDR ranges, and URLs
-- Uses `nmap` through `subprocess` for host discovery, service detection, and version detection
-- Parses `nmap` XML into structured dataclasses
-- Plugin-based checks architecture plus external plugin loading
-- YAML scan profiles with ignore rules and reusable scan settings
-- Authenticated Linux host review over SSH
-- Authenticated Windows host review over WinRM
-- Local static code scanning for secrets, insecure patterns, and configuration issues
-- Read-only PostgreSQL, MySQL, and MSSQL posture scanning with user-supplied audit credentials
-- Dependency manifest review for Python and Node projects during code scans
-- Local CVE mapping from detected service/version data
-- Aggregate dashboard generation across many reports
-- Exports JSON, HTML, and optional raw XML
-- Timestamped directories and clean timestamped filenames
-- Compares reports to show new and resolved findings
-- Cross-platform friendly for Ubuntu and Windows when `nmap` is installed and available in `PATH` or `NMAP_PATH`
+- `quick`
+- `full`
+- `web`
+- `code-scan`
+- `db-scan`
 
-## Detection Coverage
+## Install
 
-### Network and Service Checks
-
-- Risky exposed ports such as `21`, `23`, `3389`, and `5900`
-- Internet-facing SMB, Docker, Memcached, MongoDB, Redis, Elasticsearch, SNMP, and SMTP exposure warnings
-- Anonymous FTP detection
-- Lightweight active verification for Redis, Docker API, Elasticsearch, and MongoDB exposure
-- Banner and service metadata exposure warnings
-
-### Web Checks
-
-- Missing `HSTS`
-- Missing `CSP`
-- Missing `X-Frame-Options`
-- Missing `X-Content-Type-Options`
-- Missing `Referrer-Policy`
-- Missing `Permissions-Policy`
-- Missing `COOP`, `CORP`, and `COEP`
-- Insecure HTTP without HTTPS redirect
-- Weak cookie flags:
-  missing `Secure`
-  missing `HttpOnly`
-  missing `SameSite`
-  broad explicit `Domain` scope signal
-- Directory listing indicators
-- Default page detection
-- Risky HTTP methods such as `TRACE`, `PUT`, and `DELETE`
-- TRACE method response verification
-- `Server` header disclosure
-- Sensitive file and path checks such as `.git`, `.env`, `phpinfo`, `server-status`, and backup paths
-- Admin and login surface detection
-- Passive same-host crawling for discovered pages, form actions, script assets, and script-derived endpoints
-- Optional browser-assisted rendered discovery for JS-heavy apps and SPA-style navigation
-- Attack-surface inventory for discovered pages, documents, static assets, form actions, query parameters, and form fields
-- Passive review for SQL/backend error leakage, suspicious input surfaces, file/upload flows, reset flows, SOAP/WSDL hints, WebDAV, and client-side storage usage
-- Lightweight fingerprinting for WordPress, phpMyAdmin, Jenkins, Grafana, Tomcat, Kibana, and Prometheus
-
-### TLS Checks
-
-- Expired certificate
-- Certificate expiring soon
-- Self-signed certificate indicator
-- Hostname mismatch
-- Legacy TLS versions
-- Weak ciphers
-- Trust chain validation errors
-- Confidence and tag metadata on findings
-- Potential CVE correlation from detected service/product/version matches
-
-### Authenticated Linux Checks
-
-- Passwordless sudo detection
-- World-writable privileged path checks
-- SSH root login detection
-- Host firewall inactivity signal
-- Kernel version inventory capture
-
-### Authenticated Windows Checks
-
-- Windows firewall profile disabled detection
-- RDP enabled detection
-- Guest account enabled detection
-- Defender disabled signal
-- Windows version inventory capture
-
-### GCP Checks
-
-- Public compute instance inventory
-- Risky internet-facing firewall rules
-- Publicly accessible bucket IAM detection
-
-## Architecture
-
-```mermaid
-flowchart TD
-    A[CLI] --> B[Discovery Layer]
-    B --> C[nmap subprocess]
-    C --> D[XML Parser]
-    D --> E[Structured Models]
-    E --> F[Check Engine]
-    F --> F1[Network Checks]
-    F --> F2[Web Checks]
-    F --> F3[TLS Checks]
-    F --> F4[GCP Checks]
-    F --> F5[Custom Plugins]
-    E --> G[JSON Report]
-    E --> H[HTML Report]
-    E --> I[Optional Raw XML Export]
-    G --> J[Report Comparison]
-```
-
-## Project Structure
-
-```text
-src/mininessus/      # Internal implementation package
-src/accuscanner/     # Public package entrypoint
-tests/
-examples/
-.github/workflows/
-Dockerfile
-```
-
-## Ubuntu Setup
+### Ubuntu
 
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv nmap
+git clone <repo-url>
+cd AccuScanner
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install -e .[dev]
+pip install -e .
 ```
 
-If you want browser-assisted rendered web discovery:
+Or use the convenience file:
+
+```bash
+pip install -r requirements.txt
+```
+
+### Windows
+
+1. Install Python 3.11+
+2. Install Nmap for Windows
+3. Clone the repo
+4. Open PowerShell in the repo root
+
+```powershell
+py -3 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -e .
+```
+
+Or:
+
+```powershell
+pip install -r requirements.txt
+```
+
+If `nmap.exe` is not on `PATH`:
+
+```powershell
+$env:NMAP_PATH="C:\Program Files (x86)\Nmap\nmap.exe"
+```
+
+## Optional Extras
+
+Browser-assisted web scanning:
 
 ```bash
 pip install -e ".[browser]"
 python -m playwright install chromium
 ```
 
-If you want database posture scanning:
+Or:
+
+```bash
+pip install -r requirements-browser.txt
+python -m playwright install chromium
+```
+
+Database scanning:
 
 ```bash
 pip install -e ".[database]"
 ```
 
-## Windows Setup
-
-1. Install Python 3.11+
-2. Install Nmap for Windows and ensure `nmap.exe` is available on `PATH`
-3. If Nmap is installed in a custom location, set `NMAP_PATH`
-
-PowerShell example:
-
-```powershell
-py -3 -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install --upgrade pip
-pip install -e .[dev]
-accuscanner scan 192.168.1.10 --mode quick --timestamped-dir
-```
-
-If needed:
-
-```powershell
-$env:NMAP_PATH="C:\Program Files (x86)\Nmap\nmap.exe"
-```
-
-## CLI Help
-
-Show all commands and options:
+Or:
 
 ```bash
-accuscanner --help
-accuscanner -h
-accuscanner -help
+pip install -r requirements-database.txt
 ```
 
-Show scan subcommand help:
+## Important Install Note
+
+This project uses `pyproject.toml` as the source of truth for Python dependencies. The `requirements*.txt` files are convenience wrappers for cloning and installing from the repo root.
+
+Use:
 
 ```bash
-accuscanner scan --help
-accuscanner scan -h
-accuscanner scan -help
+pip install -e .
 ```
 
-Show compare subcommand help:
+Or use:
 
 ```bash
-accuscanner compare --help
+pip install -r requirements.txt
 ```
 
-Show dashboard subcommand help:
+Then add optional extras only when needed:
 
-```bash
-accuscanner dashboard --help
-```
+- `.[browser]`
+- `.[database]`
+- `requirements-browser.txt`
+- `requirements-database.txt`
 
-## Sample Commands
+System tools like `nmap` still need to be installed separately.
 
-Quick scan:
-
-```bash
-accuscanner scan 192.168.1.10 --mode quick --timestamped-dir
-```
-
-Full scan:
-
-```bash
-accuscanner scan 10.0.0.0/24 --mode full --timestamped-dir
-```
-
-Web scan:
-
-```bash
-accuscanner scan https://app.internal.example --mode web --timestamped-dir
-```
-
-Browser-assisted web scan:
-
-```bash
-accuscanner scan https://app.internal.example --mode web --browser-assisted --browser-max-pages 6 --timestamped-dir
-```
-
-Authenticated web session scan:
-
-```bash
-accuscanner scan https://app.internal.example --mode web --web-cookie "session=abc123" --web-header "Authorization: Bearer ey..." --browser-assisted --timestamped-dir
-```
-
-Code scan:
-
-```bash
-accuscanner code-scan /path/to/repo --timestamped-dir
-```
-
-Database scan:
-
-```bash
-accuscanner db-scan --db-type postgres --host db.internal --port 5432 --database appdb --user audit --password "secret" --timestamped-dir
-```
-
-MSSQL scan:
-
-```bash
-accuscanner db-scan --db-type mssql --host sql.internal --port 1433 --database appdb --user audit --password "secret" --timestamped-dir
-```
+## Quick Start
 
 Interactive launcher:
 
@@ -265,158 +127,189 @@ Interactive launcher:
 python -m accuscanner
 ```
 
-GCP posture scan:
+Direct CLI help:
 
 ```bash
-accuscanner scan perimeter.example --mode gcp --gcp-project-id my-project --timestamped-dir
+python -m accuscanner --help
+python -m accuscanner scan --help
+python -m accuscanner code-scan --help
+python -m accuscanner db-scan --help
 ```
 
-Custom ports and raw XML export:
+## Common Commands
+
+Quick scan:
 
 ```bash
-accuscanner scan 18.175.232.63 --mode quick --ports 22,80,443,6379 --save-raw-xml --timestamped-dir
+python -m accuscanner scan 192.168.1.10 --mode quick --timestamped-dir
 ```
 
-Use a YAML scan profile:
+Full scan:
 
 ```bash
-accuscanner scan 18.175.232.63 --mode full --config examples/scan-profile.yml
+python -m accuscanner scan 10.0.0.0/24 --mode full --timestamped-dir
 ```
 
-Load custom plugins:
+Web scan:
 
 ```bash
-accuscanner scan 18.175.232.63 --mode full --plugin-dir examples/plugins
+python -m accuscanner scan https://app.internal.example --mode web --timestamped-dir
 ```
 
-Run authenticated Linux checks over SSH:
+Browser-assisted web scan:
 
 ```bash
-accuscanner scan 18.175.232.63 --mode full --ssh-user ubuntu --ssh-key-path ~/.ssh/id_rsa --timestamped-dir
+python -m accuscanner scan https://app.internal.example --mode web --browser-assisted --browser-max-pages 6 --timestamped-dir
 ```
 
-Run authenticated Windows checks over WinRM:
+Authenticated web session scan:
 
 ```bash
-accuscanner scan 10.0.0.50 --mode full --winrm-user Administrator --winrm-password "Password123!" --winrm-transport ntlm --timestamped-dir
+python -m accuscanner scan https://app.internal.example --mode web --web-cookie "session=abc123" --web-header "Authorization: Bearer ey..." --browser-assisted --timestamped-dir
 ```
 
-Compare two reports:
+Code scan:
 
 ```bash
-accuscanner compare reports/old.json reports/new.json --output reports/report-diff.json
+python -m accuscanner code-scan /path/to/repo --timestamped-dir
 ```
 
-Build an aggregate dashboard from multiple JSON reports:
+PostgreSQL scan:
 
 ```bash
-accuscanner dashboard reports/*.json --html-output reports/dashboard.html --json-output reports/dashboard.json
+python -m accuscanner db-scan --db-type postgres --host db.internal --port 5432 --database appdb --user audit --password "secret" --timestamped-dir
 ```
 
-Run tests:
+MySQL scan:
 
 ```bash
-pytest
+python -m accuscanner db-scan --db-type mysql --host db.internal --port 3306 --database appdb --user audit --password "secret" --timestamped-dir
 ```
 
-## Example Output
+MSSQL scan:
 
-Reports are written with clean timestamped filenames:
+```bash
+python -m accuscanner db-scan --db-type mssql --host sql.internal --port 1433 --database appdb --user audit --password "secret" --timestamped-dir
+```
+
+## Interactive Menu
+
+Current top-level launcher options:
+
+1. Simple mode
+2. Advanced mode
+3. Custom mode
+4. Code scan
+5. Database scan
+6. Exit
+
+## Web Scanning
+
+AccuScanner web scanning includes:
+
+- security header checks
+- cookie flag checks
+- sensitive path checks
+- admin/login surface detection
+- passive same-host crawling
+- query/form/script inventory
+- browser-assisted rendered discovery
+- HTML attack-surface reporting
+
+Browser-assisted mode adds:
+
+- rendered links and forms
+- limited SPA-style route discovery
+- fetch/XHR request capture
+- better discovery for JS-heavy targets
+
+It still avoids active exploitation and does not blindly submit arbitrary workflows.
+
+## Code Scanning
+
+`code-scan` currently looks for:
+
+- embedded secrets and password-like assignments
+- hardcoded connection strings
+- SQL query string concatenation
+- debug mode
+- weak hashes
+- dangerous deserialization
+- `eval(...)` / `exec(...)`
+- `shell=True`
+- `verify=False`
+- Django `ALLOWED_HOSTS = ['*']`
+- hardcoded Flask `SECRET_KEY`
+- CSRF disabled
+- unsafe upload save patterns
+- path traversal sinks
+- insecure temporary file creation
+- dependency manifest risks in:
+  - `requirements.txt`
+  - `pyproject.toml`
+  - `package.json`
+
+Dependency findings currently include:
+
+- unpinned or weakly pinned dependencies
+- direct VCS or local-path dependencies
+- package install hook scripts
+
+## Database Scanning
+
+`db-scan` is read-only and expects explicit user-supplied credentials.
+
+Supported engines:
+
+- PostgreSQL
+- MySQL
+- MSSQL
+
+Current checks include things like:
+
+- version inventory
+- transport/encryption posture
+- current login/user context
+- privilege review
+- risky DB settings
+- sensitive-looking column names
+- MSSQL-specific checks such as `xp_cmdshell`, `TRUSTWORTHY`, and guest `CONNECT`
+
+Examples already validated during development:
+
+- PostgreSQL local lab scan
+- code-scan lab with intentionally insecure test files
+
+## Reports
+
+AccuScanner writes JSON and HTML reports, including timestamped output when requested.
+
+Typical output:
 
 ```text
-reports/20260415_120000/
-  app.internal.example-web-20260415_120000.json
-  app.internal.example-web-20260415_120000.html
-  app.internal.example-web-20260415_120000.xml
+reports/20260420_120000/
+  target-name-web-20260420_120000.json
+  target-name-web-20260420_120000.html
 ```
 
-Sample artifacts live in [examples/sample_report.json](examples/sample_report.json), [examples/sample_report.html](examples/sample_report.html), and [examples/sample_cli_output.txt](examples/sample_cli_output.txt).
+HTML reports include:
 
-Example automation assets live in [examples/scan-profile.yml](examples/scan-profile.yml), [examples/plugins/example_custom_check.py](examples/plugins/example_custom_check.py), and [examples/docker-compose.lab.yml](examples/docker-compose.lab.yml).
+- severity summary
+- top risks
+- grouped findings
+- remediation guidance
+- code findings grouped by category and file
+- web attack-surface inventory where applicable
 
-## HTML Report Highlights
+## Notes
 
-- Severity totals and overall severity score
-- Top risks section for fast triage
-- Host inventory and open ports
-- Asset-grouped remediation recommendations
-- Code-scan grouping by category and file for easier static-analysis review
-- Dedicated discovered attack-surface inventory for web scans
-- Grouped header findings in HTML so HTTP and HTTPS hardening gaps read more cleanly
-- Full finding cards with evidence, confidence, tags, and remediation guidance
-
-## Dashboard Output
-
-The `dashboard` command produces:
-
-- Aggregate severity totals across multiple reports
-- Combined severity score
-- Top findings across all scans
-- Per-report summary for trend and coverage review
-
-## Screenshots
-
-Placeholder paths for future screenshots:
-
-- `docs/screenshots/cli-summary.png`
-- `docs/screenshots/html-report-overview.png`
-- `docs/screenshots/html-top-risks.png`
-- `docs/screenshots/html-findings.png`
-
-## Docker
-
-Build:
-
-```bash
-docker build -t accuscanner .
-```
-
-Run:
-
-```bash
-docker run --rm -it accuscanner scan 192.168.1.10 --mode quick
-```
-
-## Custom Plugins
-
-AccuScanner can load simple external check plugins:
-
-```bash
-accuscanner scan 192.168.1.10 --plugin-dir examples/plugins
-```
-
-Each plugin file can expose either:
-
-- `get_checks()` returning instantiated check objects
-- `CHECKS` containing instantiated check objects
-
-## Scan Profiles
-
-AccuScanner supports lightweight YAML profiles for reusable settings:
-
-```bash
-accuscanner scan 18.175.232.63 --config examples/scan-profile.yml
-```
-
-## CI
-
-GitHub Actions runs the test suite on pushes and pull requests using Ubuntu and installs `nmap` as part of the workflow.
-
-## Limitations
-
-- This is a defensive assessment MVP, not a replacement for a full authenticated enterprise scanner
-- Findings are heuristic and exposure-focused
-- GCP checks depend on valid credentials and permissions
-- Authenticated Linux checks require valid SSH access and currently target common Linux administrative patterns only
-- Authenticated Windows checks require valid WinRM access and currently focus on common host-hardening signals
-- Web review is intentionally passive and unauthenticated: it inventories and flags exposed attack surface, but it does not perform active exploitation or destructive testing
-- Default JavaScript-aware discovery is lightweight and best-effort rather than full browser-driven crawling
-- Browser-assisted mode adds rendered route, form, and client-request discovery, but it still avoids active exploitation and does not submit arbitrary POST workflows by default
-- AWS and Azure implementation remains in the codebase but is temporarily hidden from the user-facing CLI and launcher
-- Code scanning is local-path based in v1 and does not clone repositories automatically
-- Database scanning is read-only in v1 and expects explicit PostgreSQL, MySQL, or MSSQL credentials supplied by the user
-- Scan results still depend on network reachability and the target's filtering behavior
+- Web scanning is defensive and exposure-focused, not exploit-focused.
+- Browser-assisted mode improves visibility, but it is not a full DAST engine.
+- Code scanning is local-path based and does not clone repositories automatically.
+- Database scanning is read-only and uses credentials you explicitly provide.
+- Optional features require their extras to be installed.
+- `nmap` is a required system dependency for network and web scan modes.
 
 ## Ethical Use
 
-Use AccuScanner only on systems and cloud accounts you own or are explicitly authorized to assess. Do not scan third-party infrastructure without written permission.
+Use AccuScanner only on systems, applications, codebases, and databases you own or are explicitly authorized to assess.

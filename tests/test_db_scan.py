@@ -204,6 +204,10 @@ class _FakeMSSQLCursor:
             return (1,)
         if "xp_cmdshell" in query:
             return (1,)
+        if "is_trustworthy_on" in query:
+            return (1,)
+        if "guest" in query and "permission_name = 'connect'" in query:
+            return (1,)
         return None
 
     def fetchall(self):
@@ -253,6 +257,8 @@ def test_scan_database_supports_mssql_queries():
         "DB-MSSQL-004",
         "DB-MSSQL-005",
         "DB-MSSQL-006",
+        "DB-MSSQL-007",
+        "DB-MSSQL-008",
     }
     assert fake_connection.cursor_instance.closed is True
     assert fake_connection.closed is True
