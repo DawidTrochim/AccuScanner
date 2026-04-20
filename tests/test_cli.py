@@ -1,3 +1,4 @@
+import argparse
 from unittest.mock import patch
 
 from pathlib import Path
@@ -108,7 +109,7 @@ def test_main_dispatches_db_scan(mock_run_db_scan):
 
 
 def test_build_report_paths_uses_readable_code_scan_label():
-    args = main.__globals__["argparse"].Namespace(
+    args = argparse.Namespace(
         output_dir="reports",
         timestamped_dir=False,
         json_name=None,
