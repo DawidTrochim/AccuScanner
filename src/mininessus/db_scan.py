@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -92,7 +93,7 @@ def _scan_postgres(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
         return [], [f"PostgreSQL connection failed: {exc}"]
 
     try:
-        with connection.cursor() as cursor:
+        with closing(connection.cursor()) as cursor:
             version = _fetch_one_value(cursor, "SELECT version()")
             ssl_status = _fetch_one_value(cursor, "SHOW ssl")
             current_user = _fetch_one_value(cursor, "SELECT current_user")
@@ -200,7 +201,7 @@ def _scan_mysql(config: DatabaseConfig) -> tuple[list[Finding], list[str]]:
         return [], [f"MySQL connection failed: {exc}"]
 
     try:
-        with connection.cursor() as cursor:
+        with closing(connection.cursor()) as cursor:
             version = _fetch_one_value(cursor, "SELECT VERSION()")
             current_user = _fetch_one_value(cursor, "SELECT CURRENT_USER()")
             require_secure_transport = _fetch_one_value(cursor, "SHOW VARIABLES LIKE 'require_secure_transport'", value_column=1)
